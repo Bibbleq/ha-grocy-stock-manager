@@ -1,0 +1,44 @@
+{
+  "title": "Grocy Stock Manager",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Grocy",
+        "description": "Enter a Grocy address that Home Assistant can reach directly. App ingress URLs are not supported.",
+        "data": {
+          "url": "Grocy URL",
+          "api_key": "API key",
+          "verify_ssl": "Verify SSL certificate"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reconnect to Grocy",
+        "description": "The current API key was rejected. Enter a replacement key.",
+        "data": {
+          "api_key": "API key"
+        }
+      },
+      "reconfigure": {
+        "title": "Update Grocy connection",
+        "description": "Update the Grocy address or authentication settings.",
+        "data": {
+          "url": "Grocy URL",
+          "api_key": "API key",
+          "verify_ssl": "Verify SSL certificate"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Unable to connect to Grocy",
+      "invalid_auth": "The Grocy API key was rejected",
+      "invalid_response": "Grocy returned an unexpected response",
+      "invalid_url": "Enter a valid HTTP or HTTPS Grocy URL",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "This Grocy server is already configured",
+      "reauth_successful": "Grocy authentication was updated",
+      "reconfigure_successful": "Grocy connection settings were updated"
+    }
+  }
+}
