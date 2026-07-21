@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 from homeassistant import config_entries
 from homeassistant.const import CONF_API_KEY, CONF_URL, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
 
 from custom_components.grocy_stock_manager.api import GrocyInvalidAuthError
 from custom_components.grocy_stock_manager.const import DOMAIN
@@ -22,7 +23,7 @@ async def test_user_flow_creates_entry(hass: HomeAssistant) -> None:
         DOMAIN,
         context={"source": config_entries.SOURCE_USER},
     )
-    assert result["type"] is config_entries.ConfigFlowResultType.FORM
+    assert result["type"] is FlowResultType.FORM
 
     with patch(
         "custom_components.grocy_stock_manager.api.GrocyApiClient."
@@ -35,7 +36,7 @@ async def test_user_flow_creates_entry(hass: HomeAssistant) -> None:
         )
         await hass.async_block_till_done()
 
-    assert result["type"] is config_entries.ConfigFlowResultType.CREATE_ENTRY
+    assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "http://grocy.local:9192"
     assert result["data"] == {
         CONF_URL: "http://grocy.local:9192",
@@ -61,5 +62,5 @@ async def test_user_flow_rejects_invalid_auth(hass: HomeAssistant) -> None:
             USER_INPUT,
         )
 
-    assert result["type"] is config_entries.ConfigFlowResultType.FORM
+    assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": "invalid_auth"}
