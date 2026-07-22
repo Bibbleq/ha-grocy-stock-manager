@@ -15,7 +15,16 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
+      - name: Validate HACS repository on pull request
+        if: github.event_name == 'pull_request'
+        uses: hacs/action@main
+        with:
+          category: integration
+          # HACS reads licence metadata from the default branch, so it cannot
+          # detect a licence first introduced by this pull request.
+          ignore: brands license
       - name: Validate HACS repository
+        if: github.event_name != 'pull_request'
         uses: hacs/action@main
         with:
           category: integration
