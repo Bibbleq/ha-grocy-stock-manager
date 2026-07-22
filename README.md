@@ -35,8 +35,11 @@ The current read-only build provides:
 - Redacted diagnostics.
 - Exact product lookup by barcode, product ID, or canonical product name.
 - Canonical barcode, quantity-unit, default-location, and current-stock data.
+- Exact internal quantity handling, with JSON-safe numbers at the HA boundary.
+- Matched-barcode metadata for barcode-specific quantities and multipacks.
+- A versioned action-response contract for stable scanner and voice consumers.
 - A response-only `grocy_stock_manager.lookup` Home Assistant action.
-- Automated tests, Ruff linting, and hassfest validation.
+- Automated tests, Ruff linting, hassfest, and HACS validation.
 
 Stock mutation actions will follow in later phases. The current integration does
 not contain any Grocy write calls.
@@ -73,9 +76,12 @@ data:
 response_variable: grocy_product
 ```
 
-The response includes the canonical product ID and name, every associated
-barcode, the stock quantity unit, total stock, stocked locations, and configured
-default locations. An unknown or ambiguous identifier fails the action and does
+The response includes `response_version: 1`, the canonical product ID and name,
+every associated barcode, the exact barcode mapping used for barcode lookups,
+the stock quantity unit, total stock, stocked locations, and configured default
+locations. The matched mapping includes Grocy's barcode-specific amount and
+quantity-unit ID, allowing later transaction actions to handle multipacks
+without guessing. An unknown or ambiguous identifier fails the action and does
 not return a guessed product.
 
 ## Manual installation during development

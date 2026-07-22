@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from .api import GrocyInvalidResponseError
@@ -42,19 +43,29 @@ def _optional_integer(value: Any, field: str) -> int | None:
     return _integer(value, field)
 
 
-def _number(value: Any, field: str) -> float:
+def _number(value: Any, field: str) -> Decimal:
     try:
-        return float(value)
-    except (TypeError, ValueError) as err:
+        number = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError) as err:
         raise GrocyInvalidResponseError(
             f"Grocy field {field!r} is not a number"
         ) from err
+    if not number.is_finite():
+        raise GrocyInvalidResponseError(
+            f"Grocy field {field!r} is not a finite number"
+        )
+    return number
 
 
-def _optional_number(value: Any, field: str) -> float | None:
+def _optional_number(value: Any, field: str) -> Decimal | None:
     if value is None or value == "":
         return None
     return _number(value, field)
+
+
+def _response_number(value: Decimal | None) -> float | None:
+    """Convert an exact internal quantity at the Home Assistant boundary."""
+    return float(value) if value is not None else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,7 +126,7 @@ class ProductBarcode:
     """One barcode associated with a Grocy product."""
 
     barcode: str
-    amount: float | None
+    amount: Decimal | None
     quantity_unit_id: int | None
 
     @classmethod
@@ -136,7 +147,7 @@ class ProductBarcode:
         """Return a Home Assistant response-safe representation."""
         return {
             "barcode": self.barcode,
-            "amount": self.amount,
+            "amount": _response_number(self.amount),
             "quantity_unit_id": self.quantity_unit_id,
         }
 
@@ -147,7 +158,7 @@ class StockLocation:
 
     location_id: int
     location_name: str
-    amount: float
+    amount: Decimal
 
     @classmethod
     def from_payload(cls, payload: Any) -> StockLocation:
@@ -168,7 +179,7 @@ class StockLocation:
         return {
             "location_id": self.location_id,
             "location_name": self.location_name,
-            "amount": self.amount,
+            "amount": _response_number(self.amount),
         }
 
 
@@ -180,7 +191,7 @@ class StockEntry:
     stock_id: str
     product_id: int
     location_id: int
-    amount: float
+    amount: Decimal
 
     @classmethod
     def from_payload(cls, payload: Any) -> StockEntry:
@@ -207,7 +218,7 @@ class ProductDetails:
     name: str
     barcodes: tuple[ProductBarcode, ...]
     quantity_unit: QuantityUnit
-    stock_total: float
+    stock_total: Decimal
     default_location: Location | None
     default_consume_location_id: int | None
 
@@ -248,19 +259,26 @@ class ProductLookupResult:
     lookup_value: str | int
     product: ProductDetails
     stock_locations: tuple[StockLocation, ...]
+    matched_barcode: ProductBarcode | None = None
 
     def as_service_response(self) -> dict[str, Any]:
         """Return the structured Home Assistant action response."""
         default_location = self.product.default_location
         return {
+            "response_version": 1,
             "success": True,
             "lookup_type": self.lookup_type,
             "lookup_value": self.lookup_value,
             "product_id": self.product.id,
             "product_name": self.product.name,
             "barcodes": [barcode.as_dict() for barcode in self.product.barcodes],
+            "matched_barcode": (
+                self.matched_barcode.as_dict()
+                if self.matched_barcode is not None
+                else None
+            ),
             "quantity_unit": self.product.quantity_unit.as_dict(),
-            "stock_total": self.product.stock_total,
+            "stock_total": _response_number(self.product.stock_total),
             "stock_locations": [
                 location.as_dict() for location in self.stock_locations
             ],

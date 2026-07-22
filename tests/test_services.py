@@ -67,6 +67,7 @@ async def test_lookup_action_returns_data_and_unloads(hass: HomeAssistant) -> No
         )
 
     assert response is not None
+    assert response["response_version"] == 1
     assert response["product_id"] == 1
     assert response["product_name"] == "Cat litter (Synthetic Grey)"
     assert response["stock_total"] == 3.0

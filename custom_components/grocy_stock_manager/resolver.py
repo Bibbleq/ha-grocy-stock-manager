@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .api import GrocyApiClient
+from .api import GrocyApiClient, GrocyInvalidResponseError
 from .models import ProductDetails, ProductLookupResult, parse_stock_locations
 
 
@@ -19,8 +19,23 @@ class GrocyProductResolver:
         *,
         lookup_type: str,
         lookup_value: str | int,
+        match_barcode: bool = False,
     ) -> ProductLookupResult:
         product = ProductDetails.from_payload(details_payload)
+        matched_barcode = None
+        if match_barcode:
+            matched_barcode = next(
+                (
+                    item
+                    for item in product.barcodes
+                    if item.barcode == lookup_value
+                ),
+                None,
+            )
+            if matched_barcode is None:
+                raise GrocyInvalidResponseError(
+                    "Grocy resolved a barcode without returning its barcode mapping"
+                )
         raw_locations = await self._client.async_get_product_stock_locations(
             product.id
         )
@@ -29,6 +44,7 @@ class GrocyProductResolver:
             lookup_value=lookup_value,
             product=product,
             stock_locations=parse_stock_locations(raw_locations),
+            matched_barcode=matched_barcode,
         )
 
     async def async_lookup_by_barcode(self, barcode: str) -> ProductLookupResult:
@@ -39,6 +55,7 @@ class GrocyProductResolver:
             details,
             lookup_type="barcode",
             lookup_value=value,
+            match_barcode=True,
         )
 
     async def async_lookup_by_product_id(

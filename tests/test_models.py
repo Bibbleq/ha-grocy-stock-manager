@@ -1,5 +1,7 @@
 """Tests for canonical Grocy response models."""
 
+from decimal import Decimal
+
 import pytest
 
 from custom_components.grocy_stock_manager.api import GrocyInvalidResponseError
@@ -61,7 +63,7 @@ def test_product_details_normalise_grocy_string_numbers() -> None:
     product = ProductDetails.from_payload(PRODUCT_DETAILS)
 
     assert product.id == 1
-    assert product.stock_total == 3.0
+    assert product.stock_total == Decimal("3.0")
     assert product.default_consume_location_id == 12
     assert product.default_location is not None
     assert product.default_location.id == 12
@@ -81,14 +83,21 @@ def test_lookup_response_is_canonical_and_deterministic() -> None:
         lookup_value="04260066669009",
         product=ProductDetails.from_payload(PRODUCT_DETAILS),
         stock_locations=parse_stock_locations(STOCK_LOCATIONS),
+        matched_barcode=ProductDetails.from_payload(PRODUCT_DETAILS).barcodes[0],
     )
 
     response = result.as_service_response()
+    assert response["response_version"] == 1
     assert response["success"] is True
     assert response["lookup_value"] == "04260066669009"
     assert response["product_id"] == 1
     assert response["product_name"] == "Cat litter (Synthetic Grey)"
     assert response["stock_total"] == 3.0
+    assert response["matched_barcode"] == {
+        "barcode": "04260066669009",
+        "amount": 1.0,
+        "quantity_unit_id": 4,
+    }
     assert response["default_location"] == {
         "id": 12,
         "name": "Garage Synthetic",
@@ -125,4 +134,13 @@ def test_location_and_stock_entry_reads_are_normalised() -> None:
     assert locations[0].id == 12
     assert entries[0].id == 4
     assert entries[0].location_id == 12
-    assert entries[0].amount == 3.0
+    assert entries[0].amount == Decimal("3.0")
+
+
+@pytest.mark.parametrize("value", ["NaN", "Infinity", "-Infinity"])
+def test_product_details_reject_non_finite_stock(value: str) -> None:
+    """Quantities that cannot safely cross the HA boundary fail closed."""
+    payload = {**PRODUCT_DETAILS, "stock_amount": value}
+
+    with pytest.raises(GrocyInvalidResponseError):
+        ProductDetails.from_payload(payload)
