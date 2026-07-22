@@ -1,0 +1,27 @@
+lookup:
+  name: Look up Grocy product
+  description: >-
+    Resolve one barcode, product ID, or exact product name and return canonical
+    product, barcode, location, and current-stock data. This action never changes
+    stock.
+  fields:
+    barcode:
+      name: Barcode
+      description: Exact product barcode. Leading zeroes are preserved.
+      example: "0123456789012"
+      selector:
+        text:
+    product_id:
+      name: Product ID
+      description: Exact internal Grocy product ID.
+      example: 1
+      selector:
+        number:
+          min: 1
+          mode: box
+    product_name:
+      name: Product name
+      description: Exact canonical Grocy product name.
+      example: Cat litter
+      selector:
+        text:

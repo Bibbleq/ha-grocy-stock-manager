@@ -17,6 +17,8 @@ from .api import (
     GrocyCannotConnectError,
     GrocyInvalidAuthError,
 )
+from .resolver import GrocyProductResolver
+from .services import async_setup_services, async_unload_services
 
 
 @dataclass(slots=True)
@@ -24,6 +26,7 @@ class GrocyStockManagerRuntimeData:
     """Runtime data held for a configured Grocy endpoint."""
 
     client: GrocyApiClient
+    resolver: GrocyProductResolver
     system_info: dict[str, Any]
 
 
@@ -54,8 +57,10 @@ async def async_setup_entry(
 
     entry.runtime_data = GrocyStockManagerRuntimeData(
         client=client,
+        resolver=GrocyProductResolver(client),
         system_info=dict(system_info),
     )
+    async_setup_services(hass, entry)
     return True
 
 
@@ -64,4 +69,5 @@ async def async_unload_entry(
     entry: GrocyStockManagerConfigEntry,
 ) -> bool:
     """Unload a Grocy Stock Manager config entry."""
+    async_unload_services(hass)
     return True

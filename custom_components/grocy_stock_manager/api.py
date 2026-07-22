@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 from aiohttp import ClientError, ClientSession, ContentTypeError
 
@@ -26,6 +26,14 @@ class GrocyInvalidAuthError(GrocyApiError):
 
 class GrocyInvalidResponseError(GrocyApiError):
     """Raised when Grocy returns an unexpected response."""
+
+
+class GrocyNotFoundError(GrocyApiError):
+    """Raised when a requested Grocy object does not exist."""
+
+
+class GrocyAmbiguousProductError(GrocyApiError):
+    """Raised when an exact product-name lookup is not unique."""
 
 
 def normalise_base_url(value: str) -> str:
@@ -70,18 +78,26 @@ class GrocyApiClient:
         """Return the canonical Grocy base URL."""
         return self._base_url
 
-    async def async_get_system_info(self) -> Mapping[str, Any]:
-        """Return Grocy system information and validate connectivity/auth."""
-        url = f"{self._base_url}/api/system/info"
-
+    async def _async_get_json(
+        self,
+        path: str,
+        *,
+        params: Sequence[tuple[str, str]] | None = None,
+        not_found_statuses: frozenset[int] = frozenset(),
+    ) -> Any:
+        """Return decoded JSON from a Grocy GET endpoint."""
+        url = f"{self._base_url}/api/{path.lstrip('/')}"
         try:
             async with asyncio.timeout(self._request_timeout):
                 async with self._session.get(
                     url,
                     headers={"GROCY-API-KEY": self._api_key},
+                    params=params,
                 ) as response:
                     if response.status in {401, 403}:
                         raise GrocyInvalidAuthError
+                    if response.status in not_found_statuses:
+                        raise GrocyNotFoundError
                     if response.status >= 400:
                         raise GrocyApiError(f"Grocy returned HTTP {response.status}")
 
@@ -94,7 +110,88 @@ class GrocyApiClient:
         except (TimeoutError, ClientError) as err:
             raise GrocyCannotConnectError from err
 
+        return payload
+
+    async def async_get_system_info(self) -> Mapping[str, Any]:
+        """Return Grocy system information and validate connectivity/auth."""
+        payload = await self._async_get_json("system/info")
+
         if not isinstance(payload, dict):
             raise GrocyInvalidResponseError
 
+        return payload
+
+    async def async_get_product_by_barcode(self, barcode: str) -> Mapping[str, Any]:
+        """Return product details for an exact barcode."""
+        encoded_barcode = quote(barcode, safe="")
+        payload = await self._async_get_json(
+            f"stock/products/by-barcode/{encoded_barcode}",
+            not_found_statuses=frozenset({400, 404}),
+        )
+        if not isinstance(payload, dict):
+            raise GrocyInvalidResponseError
+        return payload
+
+    async def async_get_product_by_id(self, product_id: int) -> Mapping[str, Any]:
+        """Return product details for an exact Grocy product id."""
+        payload = await self._async_get_json(
+            f"stock/products/{product_id}",
+            not_found_statuses=frozenset({400, 404}),
+        )
+        if not isinstance(payload, dict):
+            raise GrocyInvalidResponseError
+        return payload
+
+    async def async_get_product_by_name(self, product_name: str) -> Mapping[str, Any]:
+        """Return product details for one exact Grocy product name."""
+        payload = await self._async_get_json(
+            "objects/products",
+            params=(("query[]", f"name={product_name}"), ("limit", "2")),
+        )
+        if not isinstance(payload, list):
+            raise GrocyInvalidResponseError
+        if not payload:
+            raise GrocyNotFoundError
+        if len(payload) > 1:
+            raise GrocyAmbiguousProductError
+
+        from .models import parse_product_summary_id
+
+        return await self.async_get_product_by_id(parse_product_summary_id(payload[0]))
+
+    async def async_get_product_stock_locations(
+        self, product_id: int
+    ) -> list[Mapping[str, Any]]:
+        """Return locations where the product currently has stock."""
+        payload = await self._async_get_json(
+            f"stock/products/{product_id}/locations",
+            not_found_statuses=frozenset({400, 404}),
+        )
+        if not isinstance(payload, list) or not all(
+            isinstance(item, dict) for item in payload
+        ):
+            raise GrocyInvalidResponseError
+        return payload
+
+    async def async_get_product_stock_entries(
+        self, product_id: int
+    ) -> list[Mapping[str, Any]]:
+        """Return the product's current Grocy stock entries."""
+        payload = await self._async_get_json(
+            f"stock/products/{product_id}/entries",
+            not_found_statuses=frozenset({400, 404}),
+        )
+        if not isinstance(payload, list) or not all(
+            isinstance(item, dict) for item in payload
+        ):
+            raise GrocyInvalidResponseError
+        return payload
+
+    async def async_get_locations(self) -> list[Mapping[str, Any]]:
+        """Return all configured Grocy locations."""
+        payload = await self._async_get_json("objects/locations")
+        if not isinstance(payload, list) or not all(
+            isinstance(item, dict) for item in payload
+        ):
+            raise GrocyInvalidResponseError
         return payload
