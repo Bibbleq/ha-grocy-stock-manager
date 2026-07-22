@@ -40,5 +40,22 @@
       "reauth_successful": "Grocy authentication was updated",
       "reconfigure_successful": "Grocy connection settings were updated"
     }
+  },
+  "exceptions": {
+    "product_not_found": {
+      "message": "No Grocy product matched {identifier}."
+    },
+    "product_name_ambiguous": {
+      "message": "More than one Grocy product is named {product_name}. Use a barcode or product ID."
+    },
+    "invalid_auth_runtime": {
+      "message": "Grocy rejected the configured API key. Reauthenticate the integration."
+    },
+    "invalid_response_runtime": {
+      "message": "Grocy returned an unexpected response. No stock was changed."
+    },
+    "cannot_connect_runtime": {
+      "message": "Unable to complete the Grocy lookup. No stock was changed."
+    }
   }
 }
