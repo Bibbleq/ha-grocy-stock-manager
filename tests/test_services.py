@@ -10,7 +10,13 @@ from custom_components.grocy_stock_manager.const import (
     ATTR_BARCODE,
     DOMAIN,
     SERVICE_CONFIRM_PRODUCT,
+    SERVICE_CONFIRM_VOICE_TRANSACTION,
+    SERVICE_LEARN_PRODUCT_ALIAS,
+    SERVICE_LIST_PRODUCT_ALIASES,
     SERVICE_LOOKUP,
+    SERVICE_REMOVE_PRODUCT_ALIAS,
+    SERVICE_RESOLVE_PRODUCT_PHRASE,
+    SERVICE_VOICE_TRANSACTION,
 )
 from custom_components.grocy_stock_manager.models import (
     ProductDetails,
@@ -60,6 +66,12 @@ async def test_lookup_action_returns_data_and_unloads(hass: HomeAssistant) -> No
 
         assert hass.services.has_service(DOMAIN, SERVICE_LOOKUP)
         assert hass.services.has_service(DOMAIN, SERVICE_CONFIRM_PRODUCT)
+        assert hass.services.has_service(DOMAIN, SERVICE_RESOLVE_PRODUCT_PHRASE)
+        assert hass.services.has_service(DOMAIN, SERVICE_VOICE_TRANSACTION)
+        assert hass.services.has_service(DOMAIN, SERVICE_CONFIRM_VOICE_TRANSACTION)
+        assert hass.services.has_service(DOMAIN, SERVICE_LEARN_PRODUCT_ALIAS)
+        assert hass.services.has_service(DOMAIN, SERVICE_REMOVE_PRODUCT_ALIAS)
+        assert hass.services.has_service(DOMAIN, SERVICE_LIST_PRODUCT_ALIASES)
         response = await hass.services.async_call(
             DOMAIN,
             SERVICE_LOOKUP,
@@ -77,3 +89,9 @@ async def test_lookup_action_returns_data_and_unloads(hass: HomeAssistant) -> No
     assert await hass.config_entries.async_unload(entry.entry_id)
     assert not hass.services.has_service(DOMAIN, SERVICE_LOOKUP)
     assert not hass.services.has_service(DOMAIN, SERVICE_CONFIRM_PRODUCT)
+    assert not hass.services.has_service(DOMAIN, SERVICE_RESOLVE_PRODUCT_PHRASE)
+    assert not hass.services.has_service(DOMAIN, SERVICE_VOICE_TRANSACTION)
+    assert not hass.services.has_service(DOMAIN, SERVICE_CONFIRM_VOICE_TRANSACTION)
+    assert not hass.services.has_service(DOMAIN, SERVICE_LEARN_PRODUCT_ALIAS)
+    assert not hass.services.has_service(DOMAIN, SERVICE_REMOVE_PRODUCT_ALIAS)
+    assert not hass.services.has_service(DOMAIN, SERVICE_LIST_PRODUCT_ALIASES)
