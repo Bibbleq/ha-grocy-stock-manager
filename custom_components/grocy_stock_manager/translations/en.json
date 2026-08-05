@@ -60,6 +60,9 @@
     "location_not_found": {
       "message": "No usable Grocy stock location could be resolved. No stock was changed."
     },
+    "catalogue_location_not_found": {
+      "message": "Grocy location {requested} was not found exactly. Available locations: {available}. Nothing was changed."
+    },
     "location_ambiguous": {
       "message": "This product is stocked in more than one possible location. Choose a location; no stock was changed."
     },
@@ -73,7 +76,7 @@
       "message": "That barcode already belongs to a different Grocy product. Nothing was changed."
     },
     "quantity_unit_not_found": {
-      "message": "The requested Grocy quantity unit was not found exactly. Nothing was changed."
+      "message": "Grocy quantity unit {requested} was not found exactly. Available quantity units: {available}. Nothing was changed."
     },
     "catalogue_outcome_unknown": {
       "message": "Grocy may have saved part of the product setup, but the result could not be verified. Reconcile the product before trying again."

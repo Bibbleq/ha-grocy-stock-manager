@@ -274,7 +274,6 @@ async def test_catalogue_reads_and_creates_use_generic_object_routes() -> None:
         "location_id": 12,
         "qu_id_purchase": 4,
         "qu_id_stock": 4,
-        "qu_factor_purchase_to_stock": 1,
     }
     assert session.posts[1][0].endswith("/api/objects/product_barcodes")
     assert session.posts[1][2] == {

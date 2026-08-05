@@ -265,7 +265,6 @@ class GrocyApiClient:
                 "location_id": location_id,
                 "qu_id_purchase": quantity_unit_id,
                 "qu_id_stock": quantity_unit_id,
-                "qu_factor_purchase_to_stock": 1,
             },
         )
         return _created_object_id(payload)

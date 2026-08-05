@@ -23,9 +23,19 @@ class CatalogueError(Exception):
 class CatalogueLocationNotFoundError(CatalogueError):
     """Raised when the requested default location is not exact and unique."""
 
+    def __init__(self, requested: str, available_names: Sequence[str]) -> None:
+        self.requested = requested
+        self.available_names = tuple(available_names)
+        super().__init__(requested)
+
 
 class CatalogueQuantityUnitNotFoundError(CatalogueError):
     """Raised when the requested quantity unit is not exact and unique."""
+
+    def __init__(self, requested: str, available_names: Sequence[str]) -> None:
+        self.requested = requested
+        self.available_names = tuple(available_names)
+        super().__init__(requested)
 
 
 class CatalogueBarcodeConflictError(CatalogueError):
@@ -63,6 +73,27 @@ def _resolve_object(
     if len(matches) != 1:
         return None
     return matches[0]
+
+
+def _available_names(payload: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
+    """Return valid object names in a stable, human-readable order."""
+    return tuple(
+        sorted(
+            {
+                name.strip()
+                for item in payload
+                if isinstance((name := item.get("name")), str) and name.strip()
+            },
+            key=str.casefold,
+        )
+    )
+
+
+def _requested_object(object_id: int | None, object_name: str | None) -> str:
+    """Describe the object selector supplied by the caller."""
+    if object_id is not None:
+        return f"ID {object_id}"
+    return object_name or "(none)"
 
 
 class GrocyCatalogueManager:
@@ -127,13 +158,17 @@ class GrocyCatalogueManager:
         location_id: int | None,
         location_name: str | None,
     ) -> tuple[int, str]:
+        locations = await self._client.async_get_locations()
         match = _resolve_object(
-            await self._client.async_get_locations(),
+            locations,
             object_id=location_id,
             object_name=location_name,
         )
         if match is None:
-            raise CatalogueLocationNotFoundError
+            raise CatalogueLocationNotFoundError(
+                _requested_object(location_id, location_name),
+                _available_names(locations),
+            )
         return match
 
     async def _async_resolve_quantity_unit(
@@ -141,13 +176,18 @@ class GrocyCatalogueManager:
         quantity_unit_id: int | None,
         quantity_unit_name: str | None,
     ) -> tuple[int, str]:
+        quantity_units = await self._client.async_get_quantity_units()
+        requested_name = quantity_unit_name or "Pack"
         match = _resolve_object(
-            await self._client.async_get_quantity_units(),
+            quantity_units,
             object_id=quantity_unit_id,
-            object_name=quantity_unit_name or "Pack",
+            object_name=requested_name,
         )
         if match is None:
-            raise CatalogueQuantityUnitNotFoundError
+            raise CatalogueQuantityUnitNotFoundError(
+                _requested_object(quantity_unit_id, requested_name),
+                _available_names(quantity_units),
+            )
         return match
 
     async def async_confirm_product(
