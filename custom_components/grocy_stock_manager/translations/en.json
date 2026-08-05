@@ -68,6 +68,15 @@
     },
     "request_id_conflict": {
       "message": "That request ID was already used for a different transaction. No new stock change was made."
+    },
+    "barcode_conflict": {
+      "message": "That barcode already belongs to a different Grocy product. Nothing was changed."
+    },
+    "quantity_unit_not_found": {
+      "message": "The requested Grocy quantity unit was not found exactly. Nothing was changed."
+    },
+    "catalogue_outcome_unknown": {
+      "message": "Grocy may have saved part of the product setup, but the result could not be verified. Reconcile the product before trying again."
     }
   }
 }

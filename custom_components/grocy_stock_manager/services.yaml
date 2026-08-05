@@ -26,6 +26,52 @@ lookup:
       selector:
         text:
 
+confirm_product:
+  name: Confirm Grocy product
+  description: >-
+    After a person has confirmed an unknown barcode and exact product name,
+    idempotently create a new Grocy product or map the barcode to an existing
+    exact-name product. This action does not add stock.
+  fields:
+    barcode:
+      name: Barcode
+      description: Exact confirmed barcode. Leading zeroes are preserved.
+      required: true
+      selector:
+        text:
+    product_name:
+      name: Product name
+      description: >-
+        Exact confirmed name. If this exactly matches an existing product, the
+        barcode is added to that product instead of creating a duplicate.
+      required: true
+      selector:
+        text:
+    location_id:
+      name: Default location ID
+      description: Exact Grocy default location ID; do not also set a name.
+      selector:
+        number:
+          min: 1
+          mode: box
+    location_name:
+      name: Default location name
+      description: Exact Grocy default location name; do not also set an ID.
+      selector:
+        text:
+    quantity_unit_id:
+      name: Quantity unit ID
+      description: Optional exact Grocy quantity unit ID; do not also set a name.
+      selector:
+        number:
+          min: 1
+          mode: box
+    quantity_unit_name:
+      name: Quantity unit name
+      description: Optional exact Grocy quantity unit name. Defaults to Pack.
+      selector:
+        text:
+
 add:
   name: Add Grocy stock
   description: >-

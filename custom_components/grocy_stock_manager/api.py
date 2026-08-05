@@ -40,6 +40,19 @@ class GrocyAmbiguousProductError(GrocyApiError):
     """Raised when an exact product-name lookup is not unique."""
 
 
+def _created_object_id(payload: Any) -> int:
+    """Return a validated ID from Grocy's generic object-create response."""
+    if not isinstance(payload, dict):
+        raise GrocyMutationOutcomeUnknownError
+    try:
+        object_id = int(payload["created_object_id"])
+    except (KeyError, TypeError, ValueError) as err:
+        raise GrocyMutationOutcomeUnknownError from err
+    if object_id < 1:
+        raise GrocyMutationOutcomeUnknownError
+    return object_id
+
+
 def normalise_base_url(value: str) -> str:
     """Return a canonical Grocy base URL without a trailing /api segment."""
     candidate = value.strip().rstrip("/")
@@ -227,6 +240,54 @@ class GrocyApiClient:
         ):
             raise GrocyInvalidResponseError
         return payload
+
+    async def async_get_quantity_units(self) -> list[Mapping[str, Any]]:
+        """Return all configured Grocy quantity units."""
+        payload = await self._async_get_json("objects/quantity_units")
+        if not isinstance(payload, list) or not all(
+            isinstance(item, dict) for item in payload
+        ):
+            raise GrocyInvalidResponseError
+        return payload
+
+    async def async_create_product(
+        self,
+        name: str,
+        *,
+        location_id: int,
+        quantity_unit_id: int,
+    ) -> int:
+        """Create the minimum deterministic Grocy product master data."""
+        payload = await self._async_post_json(
+            "objects/products",
+            {
+                "name": name,
+                "location_id": location_id,
+                "qu_id_purchase": quantity_unit_id,
+                "qu_id_stock": quantity_unit_id,
+                "qu_factor_purchase_to_stock": 1,
+            },
+        )
+        return _created_object_id(payload)
+
+    async def async_create_product_barcode(
+        self,
+        product_id: int,
+        barcode: str,
+        *,
+        quantity_unit_id: int,
+    ) -> int:
+        """Attach one exact barcode representing one stock unit to a product."""
+        payload = await self._async_post_json(
+            "objects/product_barcodes",
+            {
+                "product_id": product_id,
+                "barcode": barcode,
+                "qu_id": quantity_unit_id,
+                "amount": 1,
+            },
+        )
+        return _created_object_id(payload)
 
     async def async_add_product(
         self, product_id: int, *, amount: str, location_id: int

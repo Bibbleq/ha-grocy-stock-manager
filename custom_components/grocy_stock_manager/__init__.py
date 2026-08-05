@@ -17,6 +17,7 @@ from .api import (
     GrocyCannotConnectError,
     GrocyInvalidAuthError,
 )
+from .catalogue import GrocyCatalogueManager
 from .journal import TransactionJournal
 from .resolver import GrocyProductResolver
 from .services import async_setup_services, async_unload_services
@@ -30,6 +31,7 @@ class GrocyStockManagerRuntimeData:
     client: GrocyApiClient
     resolver: GrocyProductResolver
     transactions: GrocyTransactionManager
+    catalogue: GrocyCatalogueManager
     system_info: dict[str, Any]
 
 
@@ -65,6 +67,7 @@ async def async_setup_entry(
         client=client,
         resolver=resolver,
         transactions=GrocyTransactionManager(client, resolver, journal),
+        catalogue=GrocyCatalogueManager(client, resolver),
         system_info=dict(system_info),
     )
     async_setup_services(hass, entry)
