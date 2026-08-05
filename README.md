@@ -5,8 +5,8 @@ Grocy stock transactions from barcode scanners, voice assistants, and
 dashboards.
 
 > [!WARNING]
-> This project is under active development and does not yet perform stock
-> mutations. Do not replace an existing production inventory workflow with it.
+> This project is under active development. Test add and consume actions in a
+> shadow/commissioning workflow and reconcile existing inventory before cutover.
 
 ## Why this exists
 
@@ -15,7 +15,7 @@ Assistant. Grocy Stock Manager has a narrower job: make an inventory change
 safely or fail visibly. Barcode scanners, Home Assistant Assist, and dashboard
 controls will all use the same transaction engine and location rules.
 
-Planned safeguards include:
+Implemented safeguards include:
 
 - Exact barcode-to-product resolution through Grocy.
 - Explicit or deterministic stock-location selection.
@@ -26,7 +26,7 @@ Planned safeguards include:
 
 ## Current phase
 
-The current read-only build provides:
+The current build provides:
 
 - Home Assistant UI configuration.
 - Direct asynchronous Grocy REST connectivity and authentication validation.
@@ -39,10 +39,14 @@ The current read-only build provides:
 - Matched-barcode metadata for barcode-specific quantities and multipacks.
 - A versioned action-response contract for stable scanner and voice consumers.
 - A response-only `grocy_stock_manager.lookup` Home Assistant action.
+- Verified `grocy_stock_manager.add` and `grocy_stock_manager.consume` actions.
+- Mandatory request IDs with a durable 256-result idempotency journal.
+- Per-product locks and a fresh pre-write stock baseline.
+- Explicit, default, or deterministic single-location selection.
+- A post-write quantity read before any transaction reports success.
+- An `unknown` outcome which blocks automatic retry when Grocy may have changed
+  stock but verification was not possible.
 - Automated tests, Ruff linting, hassfest, and HACS validation.
-
-Stock mutation actions will follow in later phases. The current integration does
-not contain any Grocy write calls.
 
 Unknown-barcode enrichment will also live here as a separate asynchronous
 subsystem. Grocy is always checked first; only an unknown barcode enters the
@@ -83,6 +87,29 @@ locations. The matched mapping includes Grocy's barcode-specific amount and
 quantity-unit ID, allowing later transaction actions to handle multipacks
 without guessing. An unknown or ambiguous identifier fails the action and does
 not return a guessed product.
+
+## Verified stock actions
+
+Call `grocy_stock_manager.add` or `grocy_stock_manager.consume` with exactly one
+product identifier, a positive stock-unit amount, and a unique `request_id`.
+The location is optional: add uses the product default; consume automatically
+uses the only stocked location, then the configured consume default, or the only
+location with sufficient stock. Any remaining ambiguity fails closed.
+
+```yaml
+action: grocy_stock_manager.consume
+data:
+  barcode: "0123456789012"
+  amount: 1
+  request_id: "garage-atom-boot-42"
+  source: garage_scanner
+response_variable: grocy_transaction
+```
+
+Only `outcome: committed` and `success: true` mean the requested before/after
+quantity was observed. `outcome: unknown` means the request must be reconciled;
+never automatically retry it with a new request ID. Repeating the same request
+ID returns the journalled result with `replayed: true` and never writes again.
 
 ## Manual installation during development
 

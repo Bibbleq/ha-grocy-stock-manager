@@ -25,3 +25,72 @@ lookup:
       example: Cat litter
       selector:
         text:
+
+add:
+  name: Add Grocy stock
+  description: >-
+    Add stock at an explicit location or the product default, then verify the
+    resulting quantity. A request ID is mandatory and safely deduplicated
+    across Home Assistant restarts.
+  fields: &mutation_fields
+    barcode:
+      name: Barcode
+      description: Exact product barcode. Use exactly one product identifier.
+      example: "0123456789012"
+      selector:
+        text:
+    product_id:
+      name: Product ID
+      description: Exact Grocy product ID. Use exactly one product identifier.
+      selector:
+        number:
+          min: 1
+          mode: box
+    product_name:
+      name: Product name
+      description: Exact Grocy product name. Use exactly one product identifier.
+      selector:
+        text:
+    amount:
+      name: Amount
+      description: Positive quantity in the product's stock unit.
+      default: 1
+      selector:
+        number:
+          min: 0.001
+          step: 1
+          mode: box
+    location_id:
+      name: Location ID
+      description: Optional exact Grocy location ID; do not also set a name.
+      selector:
+        number:
+          min: 1
+          mode: box
+    location_name:
+      name: Location name
+      description: Optional exact Grocy location name; do not also set an ID.
+      selector:
+        text:
+    request_id:
+      name: Request ID
+      description: >-
+        Unique ID for this user action. Retrying the same ID returns the stored
+        result and cannot apply the stock change twice.
+      required: true
+      selector:
+        text:
+    source:
+      name: Source
+      description: Short origin label such as garage_scanner, tablet, or voice.
+      default: home_assistant
+      selector:
+        text:
+
+consume:
+  name: Consume Grocy stock
+  description: >-
+    Remove stock from an explicit location. When omitted, the action safely
+    infers a sole stocked location or uses an unambiguous default, then verifies
+    the resulting quantity.
+  fields: *mutation_fields

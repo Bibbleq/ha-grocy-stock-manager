@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
@@ -24,11 +25,24 @@ from .api import (
     GrocyNotFoundError,
 )
 from .const import (
+    ATTR_AMOUNT,
     ATTR_BARCODE,
+    ATTR_LOCATION_ID,
+    ATTR_LOCATION_NAME,
     ATTR_PRODUCT_ID,
     ATTR_PRODUCT_NAME,
+    ATTR_REQUEST_ID,
+    ATTR_SOURCE,
     DOMAIN,
+    SERVICE_ADD,
+    SERVICE_CONSUME,
     SERVICE_LOOKUP,
+)
+from .transactions import (
+    TransactionInsufficientStockError,
+    TransactionLocationAmbiguousError,
+    TransactionLocationNotFoundError,
+    TransactionRequestConflictError,
 )
 
 if TYPE_CHECKING:
@@ -68,6 +82,49 @@ LOOKUP_SCHEMA = vol.All(
         }
     ),
     _exactly_one_identifier,
+)
+
+
+def _positive_decimal(value: Any) -> Decimal:
+    """Return one finite positive Decimal without binary-float conversion."""
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError) as err:
+        raise vol.Invalid("amount must be a number") from err
+    if not amount.is_finite() or amount <= 0:
+        raise vol.Invalid("amount must be a finite number greater than zero")
+    return amount
+
+
+def _at_most_one_location(data: dict[str, Any]) -> dict[str, Any]:
+    if ATTR_LOCATION_ID in data and ATTR_LOCATION_NAME in data:
+        raise vol.Invalid("only one of location_id or location_name is allowed")
+    return data
+
+
+MUTATION_SCHEMA = vol.All(
+    vol.Schema(
+        {
+            vol.Optional(ATTR_BARCODE): vol.All(_non_empty_string, vol.Length(max=128)),
+            vol.Optional(ATTR_PRODUCT_ID): vol.All(vol.Coerce(int), vol.Range(min=1)),
+            vol.Optional(ATTR_PRODUCT_NAME): vol.All(
+                _non_empty_string, vol.Length(max=255)
+            ),
+            vol.Required(ATTR_AMOUNT, default=Decimal("1")): _positive_decimal,
+            vol.Optional(ATTR_LOCATION_ID): vol.All(vol.Coerce(int), vol.Range(min=1)),
+            vol.Optional(ATTR_LOCATION_NAME): vol.All(
+                _non_empty_string, vol.Length(max=255)
+            ),
+            vol.Required(ATTR_REQUEST_ID): vol.All(
+                _non_empty_string, vol.Length(max=128)
+            ),
+            vol.Optional(ATTR_SOURCE, default="home_assistant"): vol.All(
+                _non_empty_string, vol.Length(max=64)
+            ),
+        }
+    ),
+    _exactly_one_identifier,
+    _at_most_one_location,
 )
 
 
@@ -133,6 +190,84 @@ async def _async_lookup(
     return result.as_service_response()
 
 
+async def _async_resolve_for_mutation(
+    entry: GrocyStockManagerConfigEntry, call: ServiceCall
+):
+    resolver = entry.runtime_data.resolver
+    if ATTR_BARCODE in call.data:
+        return await resolver.async_lookup_by_barcode(call.data[ATTR_BARCODE])
+    if ATTR_PRODUCT_ID in call.data:
+        return await resolver.async_lookup_by_product_id(call.data[ATTR_PRODUCT_ID])
+    return await resolver.async_lookup_by_product_name(call.data[ATTR_PRODUCT_NAME])
+
+
+async def _async_mutate(
+    entry: GrocyStockManagerConfigEntry,
+    call: ServiceCall,
+    operation: str,
+) -> ServiceResponse:
+    """Resolve, validate, execute, and verify one stock mutation."""
+    try:
+        lookup = await _async_resolve_for_mutation(entry, call)
+        return await entry.runtime_data.transactions.async_execute(
+            operation,
+            lookup,
+            amount=call.data[ATTR_AMOUNT],
+            request_id=call.data[ATTR_REQUEST_ID],
+            location_id=call.data.get(ATTR_LOCATION_ID),
+            location_name=call.data.get(ATTR_LOCATION_NAME),
+            source=call.data[ATTR_SOURCE],
+        )
+    except GrocyNotFoundError as err:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="product_not_found",
+            translation_placeholders={"identifier": _identifier_description(call)},
+        ) from err
+    except GrocyAmbiguousProductError as err:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="product_name_ambiguous",
+            translation_placeholders={"product_name": call.data[ATTR_PRODUCT_NAME]},
+        ) from err
+    except TransactionLocationNotFoundError as err:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="location_not_found",
+        ) from err
+    except TransactionLocationAmbiguousError as err:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="location_ambiguous",
+        ) from err
+    except TransactionInsufficientStockError as err:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="insufficient_stock",
+        ) from err
+    except TransactionRequestConflictError as err:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="request_id_conflict",
+        ) from err
+    except GrocyInvalidAuthError as err:
+        entry.async_start_reauth_if_available(call.hass)
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="invalid_auth_runtime",
+        ) from err
+    except GrocyInvalidResponseError as err:
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="invalid_response_runtime",
+        ) from err
+    except (GrocyCannotConnectError, GrocyApiError) as err:
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="cannot_connect_runtime",
+        ) from err
+
+
 @callback
 def async_setup_services(
     hass: HomeAssistant,
@@ -143,11 +278,31 @@ def async_setup_services(
     async def async_lookup(call: ServiceCall) -> ServiceResponse:
         return await _async_lookup(entry, call)
 
+    async def async_add(call: ServiceCall) -> ServiceResponse:
+        return await _async_mutate(entry, call, "add")
+
+    async def async_consume(call: ServiceCall) -> ServiceResponse:
+        return await _async_mutate(entry, call, "consume")
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_LOOKUP,
         async_lookup,
         schema=LOOKUP_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_ADD,
+        async_add,
+        schema=MUTATION_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CONSUME,
+        async_consume,
+        schema=MUTATION_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
 
@@ -156,3 +311,5 @@ def async_setup_services(
 def async_unload_services(hass: HomeAssistant) -> None:
     """Remove Grocy Stock Manager actions."""
     hass.services.async_remove(DOMAIN, SERVICE_LOOKUP)
+    hass.services.async_remove(DOMAIN, SERVICE_ADD)
+    hass.services.async_remove(DOMAIN, SERVICE_CONSUME)

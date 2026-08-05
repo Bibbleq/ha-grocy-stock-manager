@@ -32,6 +32,10 @@ class GrocyNotFoundError(GrocyApiError):
     """Raised when a requested Grocy object does not exist."""
 
 
+class GrocyMutationOutcomeUnknownError(GrocyApiError):
+    """Raised when a write may have reached Grocy but no response was received."""
+
+
 class GrocyAmbiguousProductError(GrocyApiError):
     """Raised when an exact product-name lookup is not unique."""
 
@@ -111,6 +115,34 @@ class GrocyApiClient:
             raise GrocyCannotConnectError from err
 
         return payload
+
+    async def _async_post_json(self, path: str, payload: Mapping[str, Any]) -> Any:
+        """POST JSON to Grocy, preserving uncertainty after transport failure."""
+        url = f"{self._base_url}/api/{path.lstrip('/')}"
+        try:
+            async with asyncio.timeout(self._request_timeout):
+                async with self._session.post(
+                    url,
+                    headers={"GROCY-API-KEY": self._api_key},
+                    json=dict(payload),
+                ) as response:
+                    if response.status in {401, 403}:
+                        raise GrocyInvalidAuthError
+                    if response.status >= 400:
+                        raise GrocyApiError(f"Grocy returned HTTP {response.status}")
+
+                    try:
+                        result = await response.json(content_type=None)
+                    except (ContentTypeError, ValueError) as err:
+                        # A successful HTTP status means Grocy may already have
+                        # committed the write even when its body is unreadable.
+                        raise GrocyMutationOutcomeUnknownError from err
+        except GrocyApiError:
+            raise
+        except (TimeoutError, ClientError) as err:
+            raise GrocyMutationOutcomeUnknownError from err
+
+        return result
 
     async def async_get_system_info(self) -> Mapping[str, Any]:
         """Return Grocy system information and validate connectivity/auth."""
@@ -194,4 +226,41 @@ class GrocyApiClient:
             isinstance(item, dict) for item in payload
         ):
             raise GrocyInvalidResponseError
+        return payload
+
+    async def async_add_product(
+        self, product_id: int, *, amount: str, location_id: int
+    ) -> list[Mapping[str, Any]]:
+        """Add an exact stock-unit amount at one explicit location."""
+        payload = await self._async_post_json(
+            f"stock/products/{product_id}/add",
+            {
+                "amount": amount,
+                "location_id": location_id,
+                "transaction_type": "purchase",
+            },
+        )
+        if not isinstance(payload, list) or not all(
+            isinstance(item, dict) for item in payload
+        ):
+            raise GrocyMutationOutcomeUnknownError
+        return payload
+
+    async def async_consume_product(
+        self, product_id: int, *, amount: str, location_id: int
+    ) -> list[Mapping[str, Any]]:
+        """Consume an exact stock-unit amount from one explicit location."""
+        payload = await self._async_post_json(
+            f"stock/products/{product_id}/consume",
+            {
+                "amount": amount,
+                "location_id": location_id,
+                "spoiled": False,
+                "transaction_type": "consume",
+            },
+        )
+        if not isinstance(payload, list) or not all(
+            isinstance(item, dict) for item in payload
+        ):
+            raise GrocyMutationOutcomeUnknownError
         return payload
