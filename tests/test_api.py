@@ -248,3 +248,53 @@ async def test_add_and_consume_use_explicit_location_payloads() -> None:
         "spoiled": False,
         "transaction_type": "consume",
     }
+
+
+async def test_catalogue_reads_and_creates_use_generic_object_routes() -> None:
+    """Product onboarding sends only explicit deterministic master data."""
+    units = [{"id": "4", "name": "Pack"}]
+    session = FakeSession(
+        FakeResponse(200, units),
+        FakeResponse(200, {"created_object_id": "7"}),
+        FakeResponse(200, {"created_object_id": "11"}),
+    )
+    client = GrocyApiClient(session, "http://grocy.local:9192", "secret")
+
+    assert await client.async_get_quantity_units() == units
+    assert await client.async_create_product(
+        "Synthetic product", location_id=12, quantity_unit_id=4
+    ) == 7
+    assert await client.async_create_product_barcode(
+        7, "001234", quantity_unit_id=4
+    ) == 11
+    assert session.requests[0][0].endswith("/api/objects/quantity_units")
+    assert session.posts[0][0].endswith("/api/objects/products")
+    assert session.posts[0][2] == {
+        "name": "Synthetic product",
+        "location_id": 12,
+        "qu_id_purchase": 4,
+        "qu_id_stock": 4,
+        "qu_factor_purchase_to_stock": 1,
+    }
+    assert session.posts[1][0].endswith("/api/objects/product_barcodes")
+    assert session.posts[1][2] == {
+        "product_id": 7,
+        "barcode": "001234",
+        "qu_id": 4,
+        "amount": 1,
+    }
+
+
+async def test_catalogue_create_requires_created_object_id() -> None:
+    """An unreadable generic-create result remains outcome unknown."""
+    from custom_components.grocy_stock_manager.api import (
+        GrocyMutationOutcomeUnknownError,
+    )
+
+    session = FakeSession(FakeResponse(200, {"unexpected": "response"}))
+    client = GrocyApiClient(session, "http://grocy.local:9192", "secret")
+
+    with pytest.raises(GrocyMutationOutcomeUnknownError):
+        await client.async_create_product(
+            "Synthetic product", location_id=12, quantity_unit_id=4
+        )

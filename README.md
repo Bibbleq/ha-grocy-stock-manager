@@ -39,6 +39,8 @@ The current build provides:
 - Matched-barcode metadata for barcode-specific quantities and multipacks.
 - A versioned action-response contract for stable scanner and voice consumers.
 - A response-only `grocy_stock_manager.lookup` Home Assistant action.
+- A confirmation-only `grocy_stock_manager.confirm_product` action which
+  creates a product or maps an additional barcode without changing stock.
 - Verified `grocy_stock_manager.add` and `grocy_stock_manager.consume` actions.
 - Mandatory request IDs with a durable 256-result idempotency journal.
 - Per-product locks and a fresh pre-write stock baseline.
@@ -48,11 +50,12 @@ The current build provides:
   stock but verification was not possible.
 - Automated tests, Ruff linting, hassfest, and HACS validation.
 
-Unknown-barcode enrichment will also live here as a separate asynchronous
-subsystem. Grocy is always checked first; only an unknown barcode enters the
-deterministic provider cascade, with AI as the final optional provider. A
-candidate must be confirmed before the integration creates or maps a product
-and records stock.
+Unknown-barcode enrichment remains a separate asynchronous subsystem. Grocy is
+always checked first; only an unknown barcode enters the deterministic provider
+cascade, with AI as the final optional provider. A candidate must be confirmed
+before `confirm_product` can create or map it. Stock is then changed through the
+normal verified `add` action, keeping catalogue setup and inventory transactions
+as two visible, independently recoverable steps.
 
 ## Installation with HACS
 
@@ -110,6 +113,27 @@ Only `outcome: committed` and `success: true` mean the requested before/after
 quantity was observed. `outcome: unknown` means the request must be reconciled;
 never automatically retry it with a new request ID. Repeating the same request
 ID returns the journalled result with `replayed: true` and never writes again.
+
+## Confirmed unknown products
+
+Call `grocy_stock_manager.confirm_product` only after a person has reviewed the
+barcode and product name. Supply exactly one default location. The quantity unit
+defaults to the exact Grocy unit named `Pack`.
+
+```yaml
+action: grocy_stock_manager.confirm_product
+data:
+  barcode: "0123456789012"
+  product_name: Cat litter (Golden Grey)
+  location_name: Garage Misc
+response_variable: grocy_catalogue
+```
+
+If the name exactly matches one existing product, the barcode is mapped to it;
+otherwise a new product is created. A retry first checks the barcode, so a lost
+response cannot silently create a duplicate. If the barcode already belongs to
+a differently named product, the action fails closed. This action never changes
+stock; call the verified `add` action afterwards with its own stable request ID.
 
 ## Manual installation during development
 

@@ -22,7 +22,13 @@ from .api import (
     GrocyCannotConnectError,
     GrocyInvalidAuthError,
     GrocyInvalidResponseError,
+    GrocyMutationOutcomeUnknownError,
     GrocyNotFoundError,
+)
+from .catalogue import (
+    CatalogueBarcodeConflictError,
+    CatalogueLocationNotFoundError,
+    CatalogueQuantityUnitNotFoundError,
 )
 from .const import (
     ATTR_AMOUNT,
@@ -31,10 +37,13 @@ from .const import (
     ATTR_LOCATION_NAME,
     ATTR_PRODUCT_ID,
     ATTR_PRODUCT_NAME,
+    ATTR_QUANTITY_UNIT_ID,
+    ATTR_QUANTITY_UNIT_NAME,
     ATTR_REQUEST_ID,
     ATTR_SOURCE,
     DOMAIN,
     SERVICE_ADD,
+    SERVICE_CONFIRM_PRODUCT,
     SERVICE_CONSUME,
     SERVICE_LOOKUP,
 )
@@ -125,6 +134,46 @@ MUTATION_SCHEMA = vol.All(
     ),
     _exactly_one_identifier,
     _at_most_one_location,
+)
+
+
+def _exactly_one_location(data: dict[str, Any]) -> dict[str, Any]:
+    if sum(key in data for key in (ATTR_LOCATION_ID, ATTR_LOCATION_NAME)) != 1:
+        raise vol.Invalid("exactly one of location_id or location_name is required")
+    return data
+
+
+def _at_most_one_quantity_unit(data: dict[str, Any]) -> dict[str, Any]:
+    if ATTR_QUANTITY_UNIT_ID in data and ATTR_QUANTITY_UNIT_NAME in data:
+        raise vol.Invalid(
+            "only one of quantity_unit_id or quantity_unit_name is allowed"
+        )
+    return data
+
+
+CONFIRM_PRODUCT_SCHEMA = vol.All(
+    vol.Schema(
+        {
+            vol.Required(ATTR_BARCODE): vol.All(
+                _non_empty_string, vol.Length(max=128)
+            ),
+            vol.Required(ATTR_PRODUCT_NAME): vol.All(
+                _non_empty_string, vol.Length(max=255)
+            ),
+            vol.Optional(ATTR_LOCATION_ID): vol.All(vol.Coerce(int), vol.Range(min=1)),
+            vol.Optional(ATTR_LOCATION_NAME): vol.All(
+                _non_empty_string, vol.Length(max=255)
+            ),
+            vol.Optional(ATTR_QUANTITY_UNIT_ID): vol.All(
+                vol.Coerce(int), vol.Range(min=1)
+            ),
+            vol.Optional(ATTR_QUANTITY_UNIT_NAME): vol.All(
+                _non_empty_string, vol.Length(max=255)
+            ),
+        }
+    ),
+    _exactly_one_location,
+    _at_most_one_quantity_unit,
 )
 
 
@@ -268,6 +317,64 @@ async def _async_mutate(
         ) from err
 
 
+async def _async_confirm_product(
+    entry: GrocyStockManagerConfigEntry,
+    call: ServiceCall,
+) -> ServiceResponse:
+    """Create or map only the exact product the user has confirmed."""
+    try:
+        return await entry.runtime_data.catalogue.async_confirm_product(
+            barcode=call.data[ATTR_BARCODE],
+            product_name=call.data[ATTR_PRODUCT_NAME],
+            location_id=call.data.get(ATTR_LOCATION_ID),
+            location_name=call.data.get(ATTR_LOCATION_NAME),
+            quantity_unit_id=call.data.get(ATTR_QUANTITY_UNIT_ID),
+            quantity_unit_name=call.data.get(ATTR_QUANTITY_UNIT_NAME),
+        )
+    except CatalogueBarcodeConflictError as err:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="barcode_conflict",
+        ) from err
+    except CatalogueLocationNotFoundError as err:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="location_not_found",
+        ) from err
+    except CatalogueQuantityUnitNotFoundError as err:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="quantity_unit_not_found",
+        ) from err
+    except GrocyAmbiguousProductError as err:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="product_name_ambiguous",
+            translation_placeholders={"product_name": call.data[ATTR_PRODUCT_NAME]},
+        ) from err
+    except GrocyInvalidAuthError as err:
+        entry.async_start_reauth_if_available(call.hass)
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="invalid_auth_runtime",
+        ) from err
+    except GrocyMutationOutcomeUnknownError as err:
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="catalogue_outcome_unknown",
+        ) from err
+    except GrocyInvalidResponseError as err:
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="invalid_response_runtime",
+        ) from err
+    except (GrocyCannotConnectError, GrocyApiError) as err:
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="cannot_connect_runtime",
+        ) from err
+
+
 @callback
 def async_setup_services(
     hass: HomeAssistant,
@@ -283,6 +390,9 @@ def async_setup_services(
 
     async def async_consume(call: ServiceCall) -> ServiceResponse:
         return await _async_mutate(entry, call, "consume")
+
+    async def async_confirm_product(call: ServiceCall) -> ServiceResponse:
+        return await _async_confirm_product(entry, call)
 
     hass.services.async_register(
         DOMAIN,
@@ -305,6 +415,13 @@ def async_setup_services(
         schema=MUTATION_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CONFIRM_PRODUCT,
+        async_confirm_product,
+        schema=CONFIRM_PRODUCT_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
 
 
 @callback
@@ -313,3 +430,4 @@ def async_unload_services(hass: HomeAssistant) -> None:
     hass.services.async_remove(DOMAIN, SERVICE_LOOKUP)
     hass.services.async_remove(DOMAIN, SERVICE_ADD)
     hass.services.async_remove(DOMAIN, SERVICE_CONSUME)
+    hass.services.async_remove(DOMAIN, SERVICE_CONFIRM_PRODUCT)

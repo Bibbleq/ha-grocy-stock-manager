@@ -9,6 +9,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.grocy_stock_manager.const import (
     ATTR_BARCODE,
     DOMAIN,
+    SERVICE_CONFIRM_PRODUCT,
     SERVICE_LOOKUP,
 )
 from custom_components.grocy_stock_manager.models import (
@@ -58,6 +59,7 @@ async def test_lookup_action_returns_data_and_unloads(hass: HomeAssistant) -> No
         await hass.async_block_till_done()
 
         assert hass.services.has_service(DOMAIN, SERVICE_LOOKUP)
+        assert hass.services.has_service(DOMAIN, SERVICE_CONFIRM_PRODUCT)
         response = await hass.services.async_call(
             DOMAIN,
             SERVICE_LOOKUP,
@@ -74,3 +76,4 @@ async def test_lookup_action_returns_data_and_unloads(hass: HomeAssistant) -> No
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     assert not hass.services.has_service(DOMAIN, SERVICE_LOOKUP)
+    assert not hass.services.has_service(DOMAIN, SERVICE_CONFIRM_PRODUCT)
