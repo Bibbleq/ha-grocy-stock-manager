@@ -56,6 +56,18 @@
     },
     "cannot_connect_runtime": {
       "message": "Unable to complete the Grocy lookup. No stock was changed."
+    },
+    "location_not_found": {
+      "message": "No usable Grocy stock location could be resolved. No stock was changed."
+    },
+    "location_ambiguous": {
+      "message": "This product is stocked in more than one possible location. Choose a location; no stock was changed."
+    },
+    "insufficient_stock": {
+      "message": "The selected location does not contain enough stock. No stock was changed."
+    },
+    "request_id_conflict": {
+      "message": "That request ID was already used for a different transaction. No new stock change was made."
     }
   }
 }

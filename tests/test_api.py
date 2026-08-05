@@ -44,6 +44,7 @@ class FakeSession:
         self.requests: list[
             tuple[str, dict[str, str], tuple[tuple[str, str], ...] | None]
         ] = []
+        self.posts: list[tuple[str, dict[str, str], dict[str, Any]]] = []
 
     def get(
         self,
@@ -57,6 +58,17 @@ class FakeSession:
         self.headers = headers
         self.params = params
         self.requests.append((url, headers, params))
+        return self.responses.pop(0)
+
+    def post(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str],
+        json: dict[str, Any],
+    ) -> FakeResponse:
+        """Capture a POST and return the fake response context."""
+        self.posts.append((url, headers, json))
         return self.responses.pop(0)
 
 
@@ -207,3 +219,32 @@ async def test_read_only_location_and_stock_entry_routes() -> None:
     assert await client.async_get_product_stock_entries(1) == entries
     assert session.requests[0][0].endswith("/api/objects/locations")
     assert session.requests[1][0].endswith("/api/stock/products/1/entries")
+
+
+async def test_add_and_consume_use_explicit_location_payloads() -> None:
+    """Write helpers send exact stock-unit strings and never leave location implicit."""
+    session = FakeSession(
+        FakeResponse(200, [{"id": "101"}]),
+        FakeResponse(200, [{"id": "102"}]),
+    )
+    client = GrocyApiClient(session, "http://grocy.local:9192", "secret")
+
+    assert await client.async_add_product(1, amount="2.5", location_id=12) == [
+        {"id": "101"}
+    ]
+    assert await client.async_consume_product(
+        1, amount="1", location_id=12
+    ) == [{"id": "102"}]
+    assert session.posts[0][0].endswith("/api/stock/products/1/add")
+    assert session.posts[0][2] == {
+        "amount": "2.5",
+        "location_id": 12,
+        "transaction_type": "purchase",
+    }
+    assert session.posts[1][0].endswith("/api/stock/products/1/consume")
+    assert session.posts[1][2] == {
+        "amount": "1",
+        "location_id": 12,
+        "spoiled": False,
+        "transaction_type": "consume",
+    }
