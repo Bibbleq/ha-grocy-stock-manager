@@ -167,7 +167,7 @@ class GrocyStockManagerConfigFlow(ConfigFlow, domain=DOMAIN):
             errors["base"] = "invalid_auth"
         except GrocyCannotConnectError:
             errors["base"] = "cannot_connect"
-        except GrocyInvalidResponseError, GrocyApiError:
+        except (GrocyInvalidResponseError, GrocyApiError):
             errors["base"] = "invalid_response"
         except Exception:  # pragma: no cover - defensive boundary
             _LOGGER.exception("Unexpected exception while validating Grocy")

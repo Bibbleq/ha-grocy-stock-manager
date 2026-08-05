@@ -54,6 +54,10 @@ The current build provides:
   were actually offered.
 - Read-merge-write-verify alias learning through the product `voice_aliases`
   userfield; duplicate aliases never resolve automatically.
+- A read-only inventory sensor with product totals and authoritative per-location
+  quantities for dashboards and automations.
+- Five-minute inventory polling plus an immediate refresh request after
+  successful scanner or voice stock transactions.
 - Automated tests, Ruff linting, hassfest, and HACS validation.
 
 Unknown-barcode enrichment remains a separate asynchronous subsystem. Grocy is
@@ -111,6 +115,19 @@ Future uses resolve directly. Conflicting or malformed aliases fail closed.
 The supporting actions are `resolve_product_phrase`, `learn_product_alias`,
 `remove_product_alias`, and `list_product_aliases`. They are useful for tablet
 workflows and maintenance but do not bypass the verified stock writer.
+
+## Inventory sensor
+
+The integration creates an **Inventory** sensor whose state is the number of
+distinct products currently in stock. Its `products` attribute contains each
+product's total and all stocked locations. Its `locations` attribute contains
+every configured Grocy location, including empty locations, with the products
+and quantities currently stored there.
+
+The sensor is intended as a read-only dashboard and automation feed. Grocy
+remains the only stock database. Quantities are read from Grocy's per-product,
+per-location stock endpoint, so a product stored on two shelves appears on both
+shelves instead of being assigned to its default location.
 
 ## Installation with HACS
 

@@ -18,6 +18,10 @@ from custom_components.grocy_stock_manager.const import (
     SERVICE_RESOLVE_PRODUCT_PHRASE,
     SERVICE_VOICE_TRANSACTION,
 )
+from custom_components.grocy_stock_manager.inventory import (
+    GrocyInventory,
+    InventorySnapshot,
+)
 from custom_components.grocy_stock_manager.models import (
     ProductDetails,
     ProductLookupResult,
@@ -59,6 +63,11 @@ async def test_lookup_action_returns_data_and_unloads(hass: HomeAssistant) -> No
             GrocyProductResolver,
             "async_lookup_by_barcode",
             AsyncMock(return_value=lookup_result),
+        ),
+        patch.object(
+            GrocyInventory,
+            "async_snapshot",
+            AsyncMock(return_value=InventorySnapshot(products=(), locations=())),
         ),
     ):
         assert await hass.config_entries.async_setup(entry.entry_id)
