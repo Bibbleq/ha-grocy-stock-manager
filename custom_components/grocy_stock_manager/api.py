@@ -157,6 +157,25 @@ class GrocyApiClient:
 
         return result
 
+    async def _async_put(self, path: str, payload: Mapping[str, Any]) -> None:
+        """PUT JSON to Grocy, preserving uncertainty after transport failure."""
+        url = f"{self._base_url}/api/{path.lstrip('/')}"
+        try:
+            async with asyncio.timeout(self._request_timeout):
+                async with self._session.put(
+                    url,
+                    headers={"GROCY-API-KEY": self._api_key},
+                    json=dict(payload),
+                ) as response:
+                    if response.status in {401, 403}:
+                        raise GrocyInvalidAuthError
+                    if response.status >= 400:
+                        raise GrocyApiError(f"Grocy returned HTTP {response.status}")
+        except GrocyApiError:
+            raise
+        except (TimeoutError, ClientError) as err:
+            raise GrocyMutationOutcomeUnknownError from err
+
     async def async_get_system_info(self) -> Mapping[str, Any]:
         """Return Grocy system information and validate connectivity/auth."""
         payload = await self._async_get_json("system/info")
@@ -203,6 +222,39 @@ class GrocyApiClient:
         from .models import parse_product_summary_id
 
         return await self.async_get_product_by_id(parse_product_summary_id(payload[0]))
+
+    async def async_get_products(self) -> list[Mapping[str, Any]]:
+        """Return all configured Grocy product summaries."""
+        payload = await self._async_get_json("objects/products")
+        if not isinstance(payload, list) or not all(
+            isinstance(item, dict) for item in payload
+        ):
+            raise GrocyInvalidResponseError
+        return payload
+
+    async def async_get_product_userfields(
+        self, product_id: int
+    ) -> Mapping[str, Any]:
+        """Return the configured userfield values for one product."""
+        payload = await self._async_get_json(
+            f"userfields/products/{product_id}",
+            not_found_statuses=frozenset({404}),
+        )
+        if not isinstance(payload, dict):
+            raise GrocyInvalidResponseError
+        return payload
+
+    async def async_set_product_userfield(
+        self,
+        product_id: int,
+        field_name: str,
+        value: str | None,
+    ) -> None:
+        """Set one product userfield without touching any other field."""
+        await self._async_put(
+            f"userfields/products/{product_id}",
+            {field_name: value},
+        )
 
     async def async_get_product_stock_locations(
         self, product_id: int

@@ -45,6 +45,7 @@ class FakeSession:
             tuple[str, dict[str, str], tuple[tuple[str, str], ...] | None]
         ] = []
         self.posts: list[tuple[str, dict[str, str], dict[str, Any]]] = []
+        self.puts: list[tuple[str, dict[str, str], dict[str, Any]]] = []
 
     def get(
         self,
@@ -69,6 +70,17 @@ class FakeSession:
     ) -> FakeResponse:
         """Capture a POST and return the fake response context."""
         self.posts.append((url, headers, json))
+        return self.responses.pop(0)
+
+    def put(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str],
+        json: dict[str, Any],
+    ) -> FakeResponse:
+        """Capture a PUT and return the fake response context."""
+        self.puts.append((url, headers, json))
         return self.responses.pop(0)
 
 
@@ -297,3 +309,29 @@ async def test_catalogue_create_requires_created_object_id() -> None:
         await client.async_create_product(
             "Synthetic product", location_id=12, quantity_unit_id=4
         )
+
+
+async def test_product_userfield_reads_and_writes_one_field() -> None:
+    """Alias storage uses Grocy's merge-style userfield route."""
+    fields = {"voice_aliases": '["hair gel"]', "owner": "Ben"}
+    session = FakeSession(
+        FakeResponse(200, fields),
+        FakeResponse(204, None),
+    )
+    client = GrocyApiClient(session, "http://grocy.local:9192", "secret")
+
+    assert await client.async_get_product_userfields(7) == fields
+    await client.async_set_product_userfield(
+        7,
+        "voice_aliases",
+        '["hair gel","styling gel"]',
+    )
+
+    assert session.requests[0][0].endswith("/api/userfields/products/7")
+    assert session.puts == [
+        (
+            "http://grocy.local:9192/api/userfields/products/7",
+            {"GROCY-API-KEY": "secret"},
+            {"voice_aliases": '["hair gel","styling gel"]'},
+        )
+    ]

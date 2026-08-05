@@ -140,3 +140,159 @@ consume:
     infers a sole stocked location or uses an unambiguous default, then verifies
     the resulting quantity.
   fields: *mutation_fields
+
+resolve_product_phrase:
+  name: Resolve spoken product phrase
+  description: >-
+    Search current Grocy products and their voice aliases for a spoken phrase.
+    Exact canonical or unique aliases resolve authoritatively. Similar names are
+    confirmation candidates only and never change stock.
+  fields:
+    product_phrase:
+      name: Product phrase
+      description: Product wording captured from speech, such as hair gel.
+      required: true
+      selector:
+        text:
+    operation:
+      name: Operation
+      description: Stock intent used to rank live candidates.
+      default: consume
+      selector:
+        select:
+          options:
+            - add
+            - consume
+    candidate_limit:
+      name: Candidate limit
+      description: Maximum candidates to return for confirmation.
+      default: 3
+      selector:
+        number:
+          min: 1
+          max: 5
+          mode: box
+
+voice_transaction:
+  name: Process voice stock transaction
+  description: >-
+    Resolve a spoken product phrase and execute a verified stock transaction
+    only for an authoritative exact or learned match. Uncertain matches return
+    a short-lived confirmation token and candidates without changing stock.
+  fields:
+    operation:
+      name: Operation
+      required: true
+      selector:
+        select:
+          options:
+            - add
+            - consume
+    product_phrase:
+      name: Product phrase
+      description: Product wording captured from speech.
+      required: true
+      selector:
+        text:
+    amount:
+      name: Amount
+      description: Positive quantity in the product's stock unit.
+      default: 1
+      selector:
+        number:
+          min: 0.001
+          step: 1
+          mode: box
+    location_id:
+      name: Location ID
+      description: Optional exact Grocy location ID; do not also set a name.
+      selector:
+        number:
+          min: 1
+          mode: box
+    location_name:
+      name: Location name
+      description: Optional exact Grocy location name; do not also set an ID.
+      selector:
+        text:
+    request_id:
+      name: Request ID
+      description: Unique ID used by the durable transaction journal.
+      required: true
+      selector:
+        text:
+    source:
+      name: Source
+      description: Voice satellite or workflow source label.
+      default: voice
+      selector:
+        text:
+    candidate_limit:
+      name: Candidate limit
+      description: Maximum products offered when confirmation is required.
+      default: 3
+      selector:
+        number:
+          min: 1
+          max: 5
+          mode: box
+
+confirm_voice_transaction:
+  name: Confirm voice stock transaction
+  description: >-
+    Confirm one product offered by a recent voice transaction, optionally learn
+    the spoken alias in Grocy, and execute the original verified transaction.
+  fields:
+    confirmation_token:
+      name: Confirmation token
+      description: Short-lived opaque token returned by voice_transaction.
+      required: true
+      selector:
+        text:
+    product_id:
+      name: Product ID
+      description: Exact Grocy product ID selected from the offered candidates.
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+    learn_alias:
+      name: Learn alias
+      description: Save the original phrase on the Grocy product after confirmation.
+      default: true
+      selector:
+        boolean:
+
+learn_product_alias:
+  name: Learn spoken product alias
+  description: >-
+    Save a confirmed spoken phrase on one exact Grocy product. Reassigning an
+    existing alias to a different product is rejected.
+  fields:
+    product_phrase:
+      name: Product phrase
+      required: true
+      selector:
+        text:
+    product_id:
+      name: Product ID
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+
+remove_product_alias:
+  name: Forget spoken product alias
+  description: Remove one voice alias from its Grocy product without changing stock.
+  fields:
+    product_phrase:
+      name: Product phrase
+      required: true
+      selector:
+        text:
+
+list_product_aliases:
+  name: List spoken product aliases
+  description: Return every Grocy-backed voice alias and any conflicts.

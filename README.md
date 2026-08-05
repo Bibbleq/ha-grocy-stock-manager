@@ -48,6 +48,12 @@ The current build provides:
 - A post-write quantity read before any transaction reports success.
 - An `unknown` outcome which blocks automatic retry when Grocy may have changed
   stock but verification was not possible.
+- Fail-closed spoken-name resolution with canonical matches, Grocy-backed
+  aliases, and live-stock-aware clarification candidates.
+- Short-lived confirmation tokens which can only select from the products that
+  were actually offered.
+- Read-merge-write-verify alias learning through the product `voice_aliases`
+  userfield; duplicate aliases never resolve automatically.
 - Automated tests, Ruff linting, hassfest, and HACS validation.
 
 Unknown-barcode enrichment remains a separate asynchronous subsystem. Grocy is
@@ -56,6 +62,55 @@ cascade, with AI as the final optional provider. A candidate must be confirmed
 before `confirm_product` can create or map it. Stock is then changed through the
 normal verified `add` action, keeping catalogue setup and inventory transactions
 as two visible, independently recoverable steps.
+
+## Voice product names
+
+Create one Grocy userfield before enabling alias learning:
+
+- Entity: `products`
+- Name: `voice_aliases`
+- Caption: `Voice aliases`
+- Type: single-line or multi-line text
+
+Enter one alias per line, which is the preferred and integration-written format;
+comma-separated aliases are also accepted. For example:
+
+```text
+got2b gel
+hair gel
+styling gel
+```
+
+The earlier JSON-array representation remains readable for compatibility.
+Grocy remains the source of truth, so aliases survive Home Assistant rebuilds
+and are shared by every voice satellite. Other product userfields are not
+changed.
+
+Call `grocy_stock_manager.voice_transaction` with the speech parser's product
+phrase. Exact canonical names and unique learned aliases use the normal verified
+transaction engine. A similar name only returns candidates and a 60-second
+confirmation token; it never changes stock.
+
+```yaml
+action: grocy_stock_manager.voice_transaction
+data:
+  operation: consume
+  product_phrase: hair gel
+  amount: 1
+  request_id: "{{ context.id }}"
+  source: garage_voice
+response_variable: garage_voice_result
+```
+
+The first time, `hair gel` can offer `got2b glued Styling Gel`. A tablet or
+follow-up intent confirms one offered `product_id` with
+`grocy_stock_manager.confirm_voice_transaction`. With `learn_alias: true`, that
+phrase is written to Grocy and read back before the stock transaction proceeds.
+Future uses resolve directly. Conflicting or malformed aliases fail closed.
+
+The supporting actions are `resolve_product_phrase`, `learn_product_alias`,
+`remove_product_alias`, and `list_product_aliases`. They are useful for tablet
+workflows and maintenance but do not bypass the verified stock writer.
 
 ## Installation with HACS
 

@@ -80,6 +80,21 @@
     },
     "catalogue_outcome_unknown": {
       "message": "Grocy may have saved part of the product setup, but the result could not be verified. Reconcile the product before trying again."
+    },
+    "voice_confirmation_not_found": {
+      "message": "That voice confirmation has expired or was already used. Ask again; no stock was changed."
+    },
+    "voice_candidate_not_allowed": {
+      "message": "That product was not one of the offered voice matches. No stock was changed."
+    },
+    "voice_alias_conflict": {
+      "message": "That voice alias belongs to more than one product or is already assigned elsewhere. Correct the voice_aliases values in Grocy; no stock was changed."
+    },
+    "voice_alias_field_missing": {
+      "message": "Create a products userfield in Grocy named voice_aliases before learning aliases. Use a single-line or multi-line text field. No stock was changed."
+    },
+    "voice_alias_outcome_unknown": {
+      "message": "Grocy may have saved the voice alias, but the result could not be verified. Check the product's voice_aliases userfield before trying again."
     }
   }
 }
