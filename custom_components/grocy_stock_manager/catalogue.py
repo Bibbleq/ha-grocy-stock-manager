@@ -82,7 +82,9 @@ def _available_names(payload: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
             {
                 name.strip()
                 for item in payload
-                if isinstance((name := item.get("name")), str) and name.strip()
+                if _object_id(item) is not None
+                and isinstance((name := item.get("name")), str)
+                and name.strip()
             },
             key=str.casefold,
         )
