@@ -339,12 +339,20 @@ async def _async_confirm_product(
     except CatalogueLocationNotFoundError as err:
         raise ServiceValidationError(
             translation_domain=DOMAIN,
-            translation_key="location_not_found",
+            translation_key="catalogue_location_not_found",
+            translation_placeholders={
+                "requested": err.requested,
+                "available": ", ".join(err.available_names) or "none",
+            },
         ) from err
     except CatalogueQuantityUnitNotFoundError as err:
         raise ServiceValidationError(
             translation_domain=DOMAIN,
             translation_key="quantity_unit_not_found",
+            translation_placeholders={
+                "requested": err.requested,
+                "available": ", ".join(err.available_names) or "none",
+            },
         ) from err
     except GrocyAmbiguousProductError as err:
         raise ServiceValidationError(
