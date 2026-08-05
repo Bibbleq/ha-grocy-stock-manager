@@ -277,6 +277,15 @@ def _identifier_description(call: ServiceCall) -> str:
     return f"product name {call.data[ATTR_PRODUCT_NAME]}"
 
 
+@callback
+def _request_inventory_refresh(
+    entry: GrocyStockManagerConfigEntry,
+    hass: HomeAssistant,
+) -> None:
+    """Refresh the read-only inventory shortly after a successful write."""
+    hass.async_create_task(entry.runtime_data.coordinator.async_request_refresh())
+
+
 async def _async_lookup(
     entry: GrocyStockManagerConfigEntry,
     call: ServiceCall,
@@ -350,7 +359,7 @@ async def _async_mutate(
     """Resolve, validate, execute, and verify one stock mutation."""
     try:
         lookup = await _async_resolve_for_mutation(entry, call)
-        return await entry.runtime_data.transactions.async_execute(
+        response = await entry.runtime_data.transactions.async_execute(
             operation,
             lookup,
             amount=call.data[ATTR_AMOUNT],
@@ -359,6 +368,8 @@ async def _async_mutate(
             location_name=call.data.get(ATTR_LOCATION_NAME),
             source=call.data[ATTR_SOURCE],
         )
+        _request_inventory_refresh(entry, call.hass)
+        return response
     except GrocyNotFoundError as err:
         raise ServiceValidationError(
             translation_domain=DOMAIN,
@@ -511,7 +522,7 @@ async def _async_voice_transaction(
 ) -> ServiceResponse:
     """Resolve a spoken product and mutate only an authoritative match."""
     try:
-        return await entry.runtime_data.voice.async_process(
+        response = await entry.runtime_data.voice.async_process(
             operation=call.data[ATTR_OPERATION],
             product_phrase=call.data[ATTR_PRODUCT_PHRASE],
             amount=call.data[ATTR_AMOUNT],
@@ -521,6 +532,8 @@ async def _async_voice_transaction(
             source=call.data[ATTR_SOURCE],
             candidate_limit=call.data[ATTR_CANDIDATE_LIMIT],
         )
+        _request_inventory_refresh(entry, call.hass)
+        return response
     except TransactionLocationNotFoundError as err:
         raise ServiceValidationError(
             translation_domain=DOMAIN,
@@ -565,11 +578,13 @@ async def _async_confirm_voice_transaction(
 ) -> ServiceResponse:
     """Confirm one offered candidate and execute the staged transaction."""
     try:
-        return await entry.runtime_data.voice.async_confirm(
+        response = await entry.runtime_data.voice.async_confirm(
             confirmation_token=call.data[ATTR_CONFIRMATION_TOKEN],
             product_id=call.data[ATTR_PRODUCT_ID],
             learn_alias=call.data[ATTR_LEARN_ALIAS],
         )
+        _request_inventory_refresh(entry, call.hass)
+        return response
     except VoiceConfirmationNotFoundError as err:
         raise ServiceValidationError(
             translation_domain=DOMAIN,

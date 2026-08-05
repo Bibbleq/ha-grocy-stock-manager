@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_API_KEY, CONF_URL, CONF_VERIFY_SSL
+from homeassistant.const import CONF_API_KEY, CONF_URL, CONF_VERIFY_SSL, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -18,6 +18,8 @@ from .api import (
     GrocyInvalidAuthError,
 )
 from .catalogue import GrocyCatalogueManager
+from .coordinator import GrocyInventoryCoordinator
+from .inventory import GrocyInventory
 from .journal import TransactionJournal
 from .resolver import GrocyProductResolver
 from .services import async_setup_services, async_unload_services
@@ -40,10 +42,13 @@ class GrocyStockManagerRuntimeData:
     voice_aliases: GrocyVoiceAliases
     voice_resolver: GrocyVoiceResolver
     voice: GrocyVoiceManager
+    coordinator: GrocyInventoryCoordinator
     system_info: dict[str, Any]
 
 
 type GrocyStockManagerConfigEntry = ConfigEntry[GrocyStockManagerRuntimeData]
+
+PLATFORMS = [Platform.SENSOR]
 
 
 async def async_setup_entry(
@@ -74,6 +79,8 @@ async def async_setup_entry(
     voice_aliases = GrocyVoiceAliases(client)
     transactions = GrocyTransactionManager(client, resolver, journal)
     voice_resolver = GrocyVoiceResolver(client, resolver, voice_aliases)
+    coordinator = GrocyInventoryCoordinator(hass, entry, GrocyInventory(client))
+    await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = GrocyStockManagerRuntimeData(
         client=client,
         resolver=resolver,
@@ -87,8 +94,10 @@ async def async_setup_entry(
             transactions,
             voice_aliases,
         ),
+        coordinator=coordinator,
         system_info=dict(system_info),
     )
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     async_setup_services(hass, entry)
     return True
 
@@ -98,5 +107,7 @@ async def async_unload_entry(
     entry: GrocyStockManagerConfigEntry,
 ) -> bool:
     """Unload a Grocy Stock Manager config entry."""
-    async_unload_services(hass)
-    return True
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unload_ok:
+        async_unload_services(hass)
+    return unload_ok

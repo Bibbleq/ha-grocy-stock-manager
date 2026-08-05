@@ -1,5 +1,12 @@
 {
   "title": "Grocy Stock Manager",
+  "entity": {
+    "sensor": {
+      "inventory": {
+        "name": "Inventory"
+      }
+    }
+  },
   "config": {
     "step": {
       "user": {

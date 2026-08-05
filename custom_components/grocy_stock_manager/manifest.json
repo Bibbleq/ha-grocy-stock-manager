@@ -4,10 +4,10 @@
   "codeowners": ["@Bibbleq"],
   "config_flow": true,
   "documentation": "https://github.com/Bibbleq/ha-grocy-stock-manager",
-  "integration_type": "service",
+  "integration_type": "hub",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/Bibbleq/ha-grocy-stock-manager/issues",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.5.0"
+  "version": "0.6.0"
 }
