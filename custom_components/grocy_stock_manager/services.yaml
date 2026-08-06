@@ -77,7 +77,8 @@ add:
   description: >-
     Add stock at an explicit location or the product default, then verify the
     resulting quantity. A request ID is mandatory and safely deduplicated
-    across Home Assistant restarts.
+    across Home Assistant restarts. Expected safety rejections return
+    outcome: rejected, stock_changed: false, and a machine-readable error_code.
   fields: &mutation_fields
     barcode:
       name: Barcode
@@ -138,7 +139,8 @@ consume:
   description: >-
     Remove stock from an explicit location. When omitted, the action safely
     infers a sole stocked location or uses an unambiguous default, then verifies
-    the resulting quantity.
+    the resulting quantity. Expected safety rejections return outcome: rejected,
+    stock_changed: false, and a machine-readable error_code.
   fields: *mutation_fields
 
 resolve_product_phrase:

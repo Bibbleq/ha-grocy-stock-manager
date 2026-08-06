@@ -1,5 +1,7 @@
-"""Tests for Home Assistant lookup action registration."""
+"""Tests for Home Assistant action registration and responses."""
 
+from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from homeassistant.const import CONF_API_KEY, CONF_URL, CONF_VERIFY_SSL
@@ -7,7 +9,11 @@ from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.grocy_stock_manager.const import (
+    ATTR_AMOUNT,
     ATTR_BARCODE,
+    ATTR_PRODUCT_ID,
+    ATTR_REQUEST_ID,
+    ATTR_SOURCE,
     DOMAIN,
     SERVICE_CONFIRM_PRODUCT,
     SERVICE_CONFIRM_VOICE_TRANSACTION,
@@ -28,8 +34,67 @@ from custom_components.grocy_stock_manager.models import (
     parse_stock_locations,
 )
 from custom_components.grocy_stock_manager.resolver import GrocyProductResolver
+from custom_components.grocy_stock_manager.services import _async_mutate
+from custom_components.grocy_stock_manager.transactions import (
+    TransactionLocationAmbiguousError,
+)
 
 from .test_models import PRODUCT_DETAILS, STOCK_LOCATIONS
+
+
+async def test_expected_mutation_rejection_returns_structured_response(
+    hass: HomeAssistant,
+) -> None:
+    """An ambiguous shelf is API-safe, explicit, and never reported as success."""
+    lookup_result = ProductLookupResult(
+        lookup_type="product_id",
+        lookup_value=1,
+        product=ProductDetails.from_payload(PRODUCT_DETAILS),
+        stock_locations=parse_stock_locations(STOCK_LOCATIONS),
+    )
+    resolver = SimpleNamespace(
+        async_lookup_by_product_id=AsyncMock(return_value=lookup_result)
+    )
+    transactions = SimpleNamespace(
+        async_execute=AsyncMock(side_effect=TransactionLocationAmbiguousError)
+    )
+    entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(
+            resolver=resolver,
+            transactions=transactions,
+        )
+    )
+    call = SimpleNamespace(
+        hass=hass,
+        data={
+            ATTR_PRODUCT_ID: 1,
+            ATTR_AMOUNT: Decimal("1"),
+            ATTR_REQUEST_ID: "voice-ambiguous-1",
+            ATTR_SOURCE: "voice",
+        },
+    )
+
+    response = await _async_mutate(entry, call, "consume")
+
+    assert response["success"] is False
+    assert response["outcome"] == "rejected"
+    assert response["stock_changed"] is False
+    assert response["error_code"] == "location_ambiguous"
+    assert response["requires_reconciliation"] is False
+    assert response["product_id"] == 1
+    assert response["stock_total"] == 3.0
+    assert response["stock_locations"] == [
+        {
+            "location_id": 12,
+            "location_name": "Garage A",
+            "amount": 2.0,
+        },
+        {
+            "location_id": 13,
+            "location_name": "Garage Z",
+            "amount": 1.0,
+        },
+    ]
 
 
 async def test_lookup_action_returns_data_and_unloads(hass: HomeAssistant) -> None:

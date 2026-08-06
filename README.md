@@ -186,6 +186,12 @@ quantity was observed. `outcome: unknown` means the request must be reconciled;
 never automatically retry it with a new request ID. Repeating the same request
 ID returns the journalled result with `replayed: true` and never writes again.
 
+Expected safety failures such as an ambiguous shelf, insufficient stock, or an
+unknown product return `outcome: rejected`, `stock_changed: false`, an
+`error_code`, and a readable `message`. This keeps API and automation callers
+out of opaque HTTP 500 errors while still failing closed. Rejected requests never
+write to Grocy and do not require reconciliation.
+
 ## Confirmed unknown products
 
 Call `grocy_stock_manager.confirm_product` only after a person has reviewed the
