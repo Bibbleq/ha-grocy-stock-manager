@@ -351,12 +351,44 @@ async def _async_resolve_for_mutation(
     return await resolver.async_lookup_by_product_name(call.data[ATTR_PRODUCT_NAME])
 
 
+def _mutation_rejected_response(
+    call: ServiceCall,
+    operation: str,
+    *,
+    error_code: str,
+    message: str,
+    lookup: Any | None = None,
+) -> ServiceResponse:
+    """Return an expected, fail-closed rejection without an opaque HTTP 500."""
+    response: dict[str, Any] = {
+        "response_version": 1,
+        "success": False,
+        "outcome": "rejected",
+        "stock_changed": False,
+        "operation": operation,
+        "request_id": call.data[ATTR_REQUEST_ID],
+        "source": call.data[ATTR_SOURCE],
+        "error_code": error_code,
+        "message": message,
+        "requires_reconciliation": False,
+    }
+    if lookup is not None:
+        response["product_id"] = lookup.product.id
+        response["product_name"] = lookup.product.name
+        response["stock_total"] = float(lookup.product.stock_total)
+        response["stock_locations"] = [
+            item.as_dict() for item in lookup.stock_locations
+        ]
+    return response
+
+
 async def _async_mutate(
     entry: GrocyStockManagerConfigEntry,
     call: ServiceCall,
     operation: str,
 ) -> ServiceResponse:
     """Resolve, validate, execute, and verify one stock mutation."""
+    lookup = None
     try:
         lookup = await _async_resolve_for_mutation(entry, call)
         response = await entry.runtime_data.transactions.async_execute(
@@ -370,38 +402,70 @@ async def _async_mutate(
         )
         _request_inventory_refresh(entry, call.hass)
         return response
-    except GrocyNotFoundError as err:
-        raise ServiceValidationError(
-            translation_domain=DOMAIN,
-            translation_key="product_not_found",
-            translation_placeholders={"identifier": _identifier_description(call)},
-        ) from err
-    except GrocyAmbiguousProductError as err:
-        raise ServiceValidationError(
-            translation_domain=DOMAIN,
-            translation_key="product_name_ambiguous",
-            translation_placeholders={"product_name": call.data[ATTR_PRODUCT_NAME]},
-        ) from err
-    except TransactionLocationNotFoundError as err:
-        raise ServiceValidationError(
-            translation_domain=DOMAIN,
-            translation_key="location_not_found",
-        ) from err
-    except TransactionLocationAmbiguousError as err:
-        raise ServiceValidationError(
-            translation_domain=DOMAIN,
-            translation_key="location_ambiguous",
-        ) from err
-    except TransactionInsufficientStockError as err:
-        raise ServiceValidationError(
-            translation_domain=DOMAIN,
-            translation_key="insufficient_stock",
-        ) from err
-    except TransactionRequestConflictError as err:
-        raise ServiceValidationError(
-            translation_domain=DOMAIN,
-            translation_key="request_id_conflict",
-        ) from err
+    except GrocyNotFoundError:
+        return _mutation_rejected_response(
+            call,
+            operation,
+            error_code="product_not_found",
+            message=(
+                f"No Grocy product matched {_identifier_description(call)}. "
+                "No stock was changed."
+            ),
+        )
+    except GrocyAmbiguousProductError:
+        return _mutation_rejected_response(
+            call,
+            operation,
+            error_code="product_name_ambiguous",
+            message=(
+                "More than one Grocy product matched that name. Use a barcode or "
+                "product ID; no stock was changed."
+            ),
+        )
+    except TransactionLocationNotFoundError:
+        return _mutation_rejected_response(
+            call,
+            operation,
+            error_code="location_not_found",
+            message=(
+                "No usable Grocy stock location could be resolved. "
+                "No stock was changed."
+            ),
+            lookup=lookup,
+        )
+    except TransactionLocationAmbiguousError:
+        return _mutation_rejected_response(
+            call,
+            operation,
+            error_code="location_ambiguous",
+            message=(
+                "This product is stocked in more than one possible location. "
+                "Choose a location; no stock was changed."
+            ),
+            lookup=lookup,
+        )
+    except TransactionInsufficientStockError:
+        return _mutation_rejected_response(
+            call,
+            operation,
+            error_code="insufficient_stock",
+            message=(
+                "The selected location does not contain enough stock. "
+                "No stock was changed."
+            ),
+            lookup=lookup,
+        )
+    except TransactionRequestConflictError:
+        return _mutation_rejected_response(
+            call,
+            operation,
+            error_code="request_id_conflict",
+            message=(
+                "That request ID was already used for a different transaction. "
+                "No new stock change was made."
+            ),
+            lookup=lookup,
+        )
     except GrocyInvalidAuthError as err:
         entry.async_start_reauth_if_available(call.hass)
         raise HomeAssistantError(
