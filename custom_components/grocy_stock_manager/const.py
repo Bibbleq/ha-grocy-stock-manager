@@ -16,6 +16,7 @@ SERVICE_CONFIRM_VOICE_TRANSACTION: Final = "confirm_voice_transaction"
 SERVICE_LEARN_PRODUCT_ALIAS: Final = "learn_product_alias"
 SERVICE_REMOVE_PRODUCT_ALIAS: Final = "remove_product_alias"
 SERVICE_LIST_PRODUCT_ALIASES: Final = "list_product_aliases"
+SERVICE_MERGE_PRODUCTS: Final = "merge_products"
 
 ATTR_BARCODE: Final = "barcode"
 ATTR_PRODUCT_ID: Final = "product_id"
@@ -32,6 +33,10 @@ ATTR_PRODUCT_PHRASE: Final = "product_phrase"
 ATTR_CANDIDATE_LIMIT: Final = "candidate_limit"
 ATTR_CONFIRMATION_TOKEN: Final = "confirmation_token"
 ATTR_LEARN_ALIAS: Final = "learn_alias"
+ATTR_PRODUCT_ID_TO_KEEP: Final = "product_id_to_keep"
+ATTR_PRODUCT_ID_TO_REMOVE: Final = "product_id_to_remove"
+ATTR_CANONICAL_NAME: Final = "canonical_name"
+ATTR_DRY_RUN: Final = "dry_run"
 
 STORAGE_VERSION: Final = 1
 STORAGE_KEY: Final = f"{DOMAIN}.transaction_journal"

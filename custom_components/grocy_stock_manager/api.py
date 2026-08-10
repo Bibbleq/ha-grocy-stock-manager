@@ -176,6 +176,29 @@ class GrocyApiClient:
         except (TimeoutError, ClientError) as err:
             raise GrocyMutationOutcomeUnknownError from err
 
+    async def _async_post_no_response(
+        self, path: str, payload: Mapping[str, Any] | None = None
+    ) -> None:
+        """POST JSON to an endpoint whose successful response has no body."""
+        url = f"{self._base_url}/api/{path.lstrip('/')}"
+        try:
+            async with asyncio.timeout(self._request_timeout):
+                async with self._session.post(
+                    url,
+                    headers={"GROCY-API-KEY": self._api_key},
+                    json=dict(payload or {}),
+                ) as response:
+                    if response.status in {401, 403}:
+                        raise GrocyInvalidAuthError
+                    if response.status >= 400:
+                        raise GrocyApiError(f"Grocy returned HTTP {response.status}")
+        except GrocyApiError:
+            raise
+        except (TimeoutError, ClientError) as err:
+            # The merge endpoint is transactional, but a transport failure can
+            # occur after Grocy committed it. Callers must verify by reading.
+            raise GrocyMutationOutcomeUnknownError from err
+
     async def async_get_system_info(self) -> Mapping[str, Any]:
         """Return Grocy system information and validate connectivity/auth."""
         payload = await self._async_get_json("system/info")
@@ -339,6 +362,20 @@ class GrocyApiClient:
             },
         )
         return _created_object_id(payload)
+
+    async def async_update_product(
+        self, product_id: int, changes: Mapping[str, Any]
+    ) -> None:
+        """Update only the supplied product master-data fields."""
+        await self._async_put(f"objects/products/{product_id}", changes)
+
+    async def async_merge_products(
+        self, product_id_to_keep: int, product_id_to_remove: int
+    ) -> None:
+        """Use Grocy's transactional native product merge operation."""
+        await self._async_post_no_response(
+            f"stock/products/{product_id_to_keep}/merge/{product_id_to_remove}"
+        )
 
     async def async_add_product(
         self, product_id: int, *, amount: str, location_id: int

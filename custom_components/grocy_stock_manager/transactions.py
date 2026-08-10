@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import defaultdict
+from contextlib import asynccontextmanager
 from decimal import Decimal
 from typing import Any, Literal
 
@@ -59,6 +60,18 @@ class GrocyTransactionManager:
         self._request_locks: defaultdict[str, asyncio.Lock] = defaultdict(
             asyncio.Lock
         )
+
+    @asynccontextmanager
+    async def async_lock_products(self, *product_ids: int):
+        """Prevent stock work on a deterministic set of products."""
+        locks = [self._product_locks[item] for item in sorted(set(product_ids))]
+        for lock in locks:
+            await lock.acquire()
+        try:
+            yield
+        finally:
+            for lock in reversed(locks):
+                lock.release()
 
     async def async_execute(
         self,

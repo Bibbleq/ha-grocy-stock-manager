@@ -213,6 +213,34 @@ response cannot silently create a duplicate. If the barcode already belongs to
 a differently named product, the action fails closed. This action never changes
 stock; call the verified `add` action afterwards with its own stable request ID.
 
+## Guarded product merges
+
+`grocy_stock_manager.merge_products` consolidates two duplicate products using
+Grocy's native database-transactional merge. Grocy moves stock, stock history,
+barcodes, quantity-unit conversions, recipes, meal plans, and shopping-list
+references to the kept product as one transaction. The integration first
+preserves both products' `voice_aliases`, blocks quantity-unit or third-product
+alias conflicts, journals the request, and reads the complete result back.
+
+Dry run is on by default and returns exact before/after stock, shelf, barcode,
+name, and alias data without changing Grocy:
+
+```yaml
+action: grocy_stock_manager.merge_products
+data:
+  product_id_to_keep: 97
+  product_id_to_remove: 98
+  canonical_name: Sherry
+  request_id: catalogue-sherry-2026-08-10
+  dry_run: true
+response_variable: merge_plan
+```
+
+Run the reviewed plan again with `dry_run: false` and the same request ID. Only
+`outcome: committed`, `success: true`, and all verification checks set to true
+mean the merge is complete. Grocy permanently deletes the removed duplicate as
+part of its native merge; it does not affect the former AnyList source data.
+
 ## Manual installation during development
 
 1. Copy `custom_components/grocy_stock_manager` into the Home Assistant
