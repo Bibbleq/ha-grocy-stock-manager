@@ -296,3 +296,35 @@ async def test_undo_transaction_applies_exact_opposite_once() -> None:
     assert transaction_call.kwargs["amount"] == Decimal("2")
     assert transaction_call.kwargs["location_id"] == 12
     assert journal.async_update_result.await_count == 2
+
+
+async def test_undo_rejects_catalogue_migration_transactions() -> None:
+    """The family undo path cannot compensate a bulk catalogue import."""
+    journal = AsyncMock()
+    journal.async_get.return_value = {
+        "result": {
+            "outcome": "committed",
+            "operation": "add",
+            "product_id": 1,
+            "location_id": 12,
+            "amount": 1,
+            "source": "anylist_migration",
+            "requires_reconciliation": False,
+        }
+    }
+    transactions = AsyncMock()
+    entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(
+            journal=journal,
+            transactions=transactions,
+        )
+    )
+    call = SimpleNamespace(
+        data={ATTR_ORIGINAL_REQUEST_ID: "anylist-import-1"},
+    )
+
+    response = await _async_undo_transaction(entry, call)
+
+    assert response["success"] is False
+    assert response["error_code"] == "transaction_not_undoable"
+    transactions.async_execute.assert_not_awaited()

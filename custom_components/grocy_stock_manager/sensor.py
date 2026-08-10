@@ -11,6 +11,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import GrocyInventoryCoordinator
+from .journal import is_undoable_result
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -131,10 +132,7 @@ class GrocyStockManagerStatusSensor(
             (
                 item
                 for item in recent
-                if item.get("operation") in {"add", "consume"}
-                and item.get("outcome") == "committed"
-                and not item.get("undo_of")
-                and not item.get("undone_by")
+                if item.get("recorded_at") and is_undoable_result(item)
             ),
             None,
         )
