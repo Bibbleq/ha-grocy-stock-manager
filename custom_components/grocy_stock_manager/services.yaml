@@ -298,3 +298,50 @@ remove_product_alias:
 list_product_aliases:
   name: List spoken product aliases
   description: Return every Grocy-backed voice alias and any conflicts.
+
+merge_products:
+  name: Merge Grocy products
+  description: >-
+    Preview or execute Grocy's native transactional product merge. Stock,
+    history, barcodes, recipes, meal plans, and shopping-list references move
+    to the kept product atomically. Voice aliases are preserved and the full
+    result is read back. The removed Grocy product is permanently deleted by
+    Grocy only after the native merge commits. Dry run is enabled by default.
+  fields:
+    product_id_to_keep:
+      name: Product ID to keep
+      description: Existing Grocy product that will remain after the merge.
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+    product_id_to_remove:
+      name: Product ID to remove
+      description: >-
+        Existing duplicate product Grocy will permanently delete after moving
+        all of its linked data to the kept product.
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+    canonical_name:
+      name: Canonical name
+      description: Optional final name for the kept product.
+      selector:
+        text:
+    request_id:
+      name: Request ID
+      description: >-
+        Unique ID for this merge. Reusing it replays the recorded result and
+        cannot merge a second time.
+      required: true
+      selector:
+        text:
+    dry_run:
+      name: Dry run
+      description: Return the exact merge plan without changing Grocy.
+      default: true
+      selector:
+        boolean:

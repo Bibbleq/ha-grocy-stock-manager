@@ -335,3 +335,28 @@ async def test_product_userfield_reads_and_writes_one_field() -> None:
             {"voice_aliases": '["hair gel","styling gel"]'},
         )
     ]
+
+
+async def test_native_merge_accepts_empty_success_and_product_update() -> None:
+    """The native merge route is allowed to return HTTP 204 without JSON."""
+    session = FakeSession(
+        FakeResponse(204, None),
+        FakeResponse(204, None),
+    )
+    client = GrocyApiClient(session, "http://grocy.local:9192", "secret")
+
+    await client.async_merge_products(7, 8)
+    await client.async_update_product(7, {"name": "Canonical product"})
+
+    assert session.posts == [
+        (
+            "http://grocy.local:9192/api/stock/products/7/merge/8",
+            {"GROCY-API-KEY": "secret"},
+            {},
+        )
+    ]
+    assert session.puts[-1] == (
+        "http://grocy.local:9192/api/objects/products/7",
+        {"GROCY-API-KEY": "secret"},
+        {"name": "Canonical product"},
+    )

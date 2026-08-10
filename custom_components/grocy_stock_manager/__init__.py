@@ -21,6 +21,7 @@ from .catalogue import GrocyCatalogueManager
 from .coordinator import GrocyInventoryCoordinator
 from .inventory import GrocyInventory
 from .journal import TransactionJournal
+from .merges import GrocyProductMergeManager
 from .resolver import GrocyProductResolver
 from .services import async_setup_services, async_unload_services
 from .transactions import GrocyTransactionManager
@@ -42,6 +43,7 @@ class GrocyStockManagerRuntimeData:
     voice_aliases: GrocyVoiceAliases
     voice_resolver: GrocyVoiceResolver
     voice: GrocyVoiceManager
+    merges: GrocyProductMergeManager
     coordinator: GrocyInventoryCoordinator
     system_info: dict[str, Any]
 
@@ -93,6 +95,13 @@ async def async_setup_entry(
             resolver,
             transactions,
             voice_aliases,
+        ),
+        merges=GrocyProductMergeManager(
+            client,
+            resolver,
+            transactions,
+            voice_aliases,
+            journal,
         ),
         coordinator=coordinator,
         system_info=dict(system_info),

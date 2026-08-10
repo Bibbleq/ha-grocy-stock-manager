@@ -20,6 +20,7 @@ from custom_components.grocy_stock_manager.const import (
     SERVICE_LEARN_PRODUCT_ALIAS,
     SERVICE_LIST_PRODUCT_ALIASES,
     SERVICE_LOOKUP,
+    SERVICE_MERGE_PRODUCTS,
     SERVICE_REMOVE_PRODUCT_ALIAS,
     SERVICE_RESOLVE_PRODUCT_PHRASE,
     SERVICE_VOICE_TRANSACTION,
@@ -146,6 +147,7 @@ async def test_lookup_action_returns_data_and_unloads(hass: HomeAssistant) -> No
         assert hass.services.has_service(DOMAIN, SERVICE_LEARN_PRODUCT_ALIAS)
         assert hass.services.has_service(DOMAIN, SERVICE_REMOVE_PRODUCT_ALIAS)
         assert hass.services.has_service(DOMAIN, SERVICE_LIST_PRODUCT_ALIASES)
+        assert hass.services.has_service(DOMAIN, SERVICE_MERGE_PRODUCTS)
         response = await hass.services.async_call(
             DOMAIN,
             SERVICE_LOOKUP,
@@ -169,3 +171,4 @@ async def test_lookup_action_returns_data_and_unloads(hass: HomeAssistant) -> No
     assert not hass.services.has_service(DOMAIN, SERVICE_LEARN_PRODUCT_ALIAS)
     assert not hass.services.has_service(DOMAIN, SERVICE_REMOVE_PRODUCT_ALIAS)
     assert not hass.services.has_service(DOMAIN, SERVICE_LIST_PRODUCT_ALIASES)
+    assert not hass.services.has_service(DOMAIN, SERVICE_MERGE_PRODUCTS)

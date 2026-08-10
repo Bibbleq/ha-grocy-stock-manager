@@ -34,12 +34,16 @@ from .const import (
     ATTR_AMOUNT,
     ATTR_BARCODE,
     ATTR_CANDIDATE_LIMIT,
+    ATTR_CANONICAL_NAME,
     ATTR_CONFIRMATION_TOKEN,
+    ATTR_DRY_RUN,
     ATTR_LEARN_ALIAS,
     ATTR_LOCATION_ID,
     ATTR_LOCATION_NAME,
     ATTR_OPERATION,
     ATTR_PRODUCT_ID,
+    ATTR_PRODUCT_ID_TO_KEEP,
+    ATTR_PRODUCT_ID_TO_REMOVE,
     ATTR_PRODUCT_NAME,
     ATTR_PRODUCT_PHRASE,
     ATTR_QUANTITY_UNIT_ID,
@@ -54,9 +58,16 @@ from .const import (
     SERVICE_LEARN_PRODUCT_ALIAS,
     SERVICE_LIST_PRODUCT_ALIASES,
     SERVICE_LOOKUP,
+    SERVICE_MERGE_PRODUCTS,
     SERVICE_REMOVE_PRODUCT_ALIAS,
     SERVICE_RESOLVE_PRODUCT_PHRASE,
     SERVICE_VOICE_TRANSACTION,
+)
+from .merges import (
+    MergeAliasConflictError,
+    MergeNameConflictError,
+    MergeQuantityUnitMismatchError,
+    MergeSameProductError,
 )
 from .transactions import (
     TransactionInsufficientStockError,
@@ -265,6 +276,25 @@ REMOVE_PRODUCT_ALIAS_SCHEMA = vol.Schema(
         vol.Required(ATTR_PRODUCT_PHRASE): vol.All(
             _non_empty_string, vol.Length(max=255)
         )
+    }
+)
+
+
+MERGE_PRODUCTS_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_PRODUCT_ID_TO_KEEP): vol.All(
+            vol.Coerce(int), vol.Range(min=1)
+        ),
+        vol.Required(ATTR_PRODUCT_ID_TO_REMOVE): vol.All(
+            vol.Coerce(int), vol.Range(min=1)
+        ),
+        vol.Optional(ATTR_CANONICAL_NAME): vol.All(
+            _non_empty_string, vol.Length(max=255)
+        ),
+        vol.Required(ATTR_REQUEST_ID): vol.All(
+            _non_empty_string, vol.Length(max=128)
+        ),
+        vol.Optional(ATTR_DRY_RUN, default=True): cv.boolean,
     }
 )
 
@@ -861,6 +891,76 @@ async def _async_list_product_aliases(
     }
 
 
+async def _async_merge_products(
+    entry: GrocyStockManagerConfigEntry,
+    call: ServiceCall,
+) -> ServiceResponse:
+    """Plan or execute a guarded native Grocy product merge."""
+    try:
+        response = await entry.runtime_data.merges.async_execute(
+            product_id_to_keep=call.data[ATTR_PRODUCT_ID_TO_KEEP],
+            product_id_to_remove=call.data[ATTR_PRODUCT_ID_TO_REMOVE],
+            canonical_name=call.data.get(ATTR_CANONICAL_NAME),
+            request_id=call.data[ATTR_REQUEST_ID],
+            dry_run=call.data[ATTR_DRY_RUN],
+        )
+        if not call.data[ATTR_DRY_RUN]:
+            _request_inventory_refresh(entry, call.hass)
+        return response
+    except MergeSameProductError:
+        error_code = "same_product"
+        message = "The keep and remove product IDs must be different."
+    except MergeQuantityUnitMismatchError:
+        error_code = "quantity_unit_mismatch"
+        message = "The products use different stock quantity units."
+    except MergeAliasConflictError as err:
+        error_code = "voice_alias_conflict"
+        message = f"Voice alias {err.args[0]!r} belongs to another product."
+    except MergeNameConflictError as err:
+        error_code = "canonical_name_conflict"
+        message = f"Canonical name {err.args[0]!r} belongs to another product."
+    except TransactionRequestConflictError:
+        error_code = "request_id_conflict"
+        message = "That request ID was already used for different work."
+    except GrocyNotFoundError:
+        error_code = "product_not_found"
+        message = "One of the requested Grocy products does not exist or is inactive."
+    except GrocyInvalidAuthError as err:
+        entry.async_start_reauth_if_available(call.hass)
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="invalid_auth_runtime",
+        ) from err
+    except GrocyMutationOutcomeUnknownError as err:
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="merge_outcome_unknown",
+        ) from err
+    except GrocyInvalidResponseError as err:
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="invalid_response_runtime",
+        ) from err
+    except (GrocyCannotConnectError, GrocyApiError) as err:
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="cannot_connect_runtime",
+        ) from err
+
+    return {
+        "response_version": 1,
+        "success": False,
+        "outcome": "rejected",
+        "stock_changed": False,
+        "operation": "merge_products",
+        "request_id": call.data[ATTR_REQUEST_ID],
+        "dry_run": call.data[ATTR_DRY_RUN],
+        "error_code": error_code,
+        "message": message,
+        "requires_reconciliation": False,
+    }
+
+
 @callback
 def async_setup_services(
     hass: HomeAssistant,
@@ -899,6 +999,9 @@ def async_setup_services(
 
     async def async_list_product_aliases(_call: ServiceCall) -> ServiceResponse:
         return await _async_list_product_aliases(entry)
+
+    async def async_merge_products(call: ServiceCall) -> ServiceResponse:
+        return await _async_merge_products(entry, call)
 
     hass.services.async_register(
         DOMAIN,
@@ -970,6 +1073,13 @@ def async_setup_services(
         schema=vol.Schema({}),
         supports_response=SupportsResponse.ONLY,
     )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_MERGE_PRODUCTS,
+        async_merge_products,
+        schema=MERGE_PRODUCTS_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
 
 
 @callback
@@ -985,3 +1095,4 @@ def async_unload_services(hass: HomeAssistant) -> None:
     hass.services.async_remove(DOMAIN, SERVICE_LEARN_PRODUCT_ALIAS)
     hass.services.async_remove(DOMAIN, SERVICE_REMOVE_PRODUCT_ALIAS)
     hass.services.async_remove(DOMAIN, SERVICE_LIST_PRODUCT_ALIASES)
+    hass.services.async_remove(DOMAIN, SERVICE_MERGE_PRODUCTS)
