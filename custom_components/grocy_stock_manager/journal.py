@@ -14,6 +14,32 @@ from homeassistant.helpers.storage import Store
 
 from .const import MAX_JOURNAL_RECORDS, STORAGE_KEY, STORAGE_VERSION
 
+_UNDOABLE_SOURCES = frozenset(
+    {
+        "dashboard",
+        "garage_scanner",
+        "garage_voice",
+        "home_assistant",
+        "home_assistant_confirm",
+        "tablet",
+        "voice",
+    }
+)
+
+
+def is_undoable_result(result: Mapping[str, Any]) -> bool:
+    """Return whether one verified family-facing mutation may be compensated."""
+    source = result.get("source")
+    return (
+        result.get("outcome") == "committed"
+        and result.get("operation") in {"add", "consume"}
+        and not result.get("requires_reconciliation")
+        and not result.get("undo_of")
+        and not result.get("undone_by")
+        and isinstance(source, str)
+        and (source in _UNDOABLE_SOURCES or source.startswith("garage_"))
+    )
+
 
 class TransactionJournal:
     """Persist completed or uncertain request outcomes across HA restarts."""

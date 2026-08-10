@@ -69,6 +69,7 @@ from .const import (
     SERVICE_UNDO_TRANSACTION,
     SERVICE_VOICE_TRANSACTION,
 )
+from .journal import is_undoable_result
 from .merges import (
     MergeAliasConflictError,
     MergeNameConflictError,
@@ -801,12 +802,7 @@ async def _async_undo_transaction(
             "stock_changed": False,
             "undone_by": result["undone_by"],
         }
-    if (
-        result.get("outcome") != "committed"
-        or result.get("operation") not in {"add", "consume"}
-        or result.get("requires_reconciliation")
-        or result.get("undo_of")
-    ):
+    if not is_undoable_result(result):
         return {
             "response_version": 1,
             "success": False,
