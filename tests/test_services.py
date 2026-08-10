@@ -20,6 +20,7 @@ from custom_components.grocy_stock_manager.const import (
     ATTR_SOURCE,
     DOMAIN,
     SERVICE_ACKNOWLEDGE_RECONCILIATION,
+    SERVICE_COMPLETE_PRODUCT_IDENTIFICATION,
     SERVICE_CONFIRM_PRODUCT,
     SERVICE_CONFIRM_PRODUCT_TRANSACTION,
     SERVICE_CONFIRM_VOICE_TRANSACTION,
@@ -27,8 +28,11 @@ from custom_components.grocy_stock_manager.const import (
     SERVICE_LIST_PRODUCT_ALIASES,
     SERVICE_LOOKUP,
     SERVICE_MERGE_PRODUCTS,
+    SERVICE_OVERRIDE_PRODUCT_IDENTIFICATION,
+    SERVICE_REJECT_PRODUCT_IDENTIFICATION,
     SERVICE_REMOVE_PRODUCT_ALIAS,
     SERVICE_RESOLVE_PRODUCT_PHRASE,
+    SERVICE_START_PRODUCT_IDENTIFICATION,
     SERVICE_UNDO_TRANSACTION,
     SERVICE_VOICE_TRANSACTION,
 )
@@ -162,6 +166,16 @@ async def test_lookup_action_returns_data_and_unloads(hass: HomeAssistant) -> No
         assert hass.services.has_service(DOMAIN, SERVICE_MERGE_PRODUCTS)
         assert hass.services.has_service(DOMAIN, SERVICE_UNDO_TRANSACTION)
         assert hass.services.has_service(DOMAIN, SERVICE_ACKNOWLEDGE_RECONCILIATION)
+        assert hass.services.has_service(DOMAIN, SERVICE_START_PRODUCT_IDENTIFICATION)
+        assert hass.services.has_service(
+            DOMAIN, SERVICE_OVERRIDE_PRODUCT_IDENTIFICATION
+        )
+        assert hass.services.has_service(
+            DOMAIN, SERVICE_COMPLETE_PRODUCT_IDENTIFICATION
+        )
+        assert hass.services.has_service(
+            DOMAIN, SERVICE_REJECT_PRODUCT_IDENTIFICATION
+        )
         response = await hass.services.async_call(
             DOMAIN,
             SERVICE_LOOKUP,
@@ -189,6 +203,14 @@ async def test_lookup_action_returns_data_and_unloads(hass: HomeAssistant) -> No
     assert not hass.services.has_service(DOMAIN, SERVICE_MERGE_PRODUCTS)
     assert not hass.services.has_service(DOMAIN, SERVICE_UNDO_TRANSACTION)
     assert not hass.services.has_service(DOMAIN, SERVICE_ACKNOWLEDGE_RECONCILIATION)
+    assert not hass.services.has_service(DOMAIN, SERVICE_START_PRODUCT_IDENTIFICATION)
+    assert not hass.services.has_service(
+        DOMAIN, SERVICE_OVERRIDE_PRODUCT_IDENTIFICATION
+    )
+    assert not hass.services.has_service(
+        DOMAIN, SERVICE_COMPLETE_PRODUCT_IDENTIFICATION
+    )
+    assert not hass.services.has_service(DOMAIN, SERVICE_REJECT_PRODUCT_IDENTIFICATION)
 
 
 async def test_confirm_product_transaction_preserves_original_consume_intent() -> None:

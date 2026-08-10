@@ -59,21 +59,28 @@ The current build provides:
 - A read-only inventory sensor with product totals and authoritative per-location
   quantities, barcodes, aliases, and searchable text for dashboards and
   automations.
-- A Status sensor with recent activity, pending voice confirmations, API health,
-  and a persistent reconciliation-required latch.
+- A Status sensor with recent activity, pending voice confirmations, pending
+  product identifications, API health, and a persistent
+  reconciliation-required latch.
+- Durable unknown-product jobs which preserve the original barcode, operation,
+  quantity, shelf and request ID before slow AI work begins.
+- Fire-and-forget AI identification through a configured Home Assistant
+  conversation agent, with a 45-second timeout, restart recovery and a manual
+  override that safely discards late results.
 - A one-shot `undo_transaction` action for verified adds and consumes, plus an
   explicit `acknowledge_reconciliation` action after a physical stock check.
 - Five-minute inventory polling plus an immediate refresh request after
   successful scanner or voice stock transactions.
 - Automated tests, Ruff linting, hassfest, and HACS validation.
 
-Unknown-barcode enrichment remains a separate asynchronous subsystem. Grocy is
+Unknown-barcode enrichment is a separate asynchronous subsystem. Grocy is
 always checked first; only an unknown barcode enters the deterministic provider
-cascade, with AI as the final optional provider. A candidate must be confirmed
-before `confirm_product_transaction` can create or map it and apply the
-immutable operation, quantity, shelf, and request ID captured at scan time. This
-prevents an unknown Consume scan from accidentally becoming an Add while the
-tablet is asking for a product name.
+cascade. If those providers fail, `start_product_identification` durably stores
+the scanner intent and returns before AI starts. The Status sensor and
+`grocy_stock_manager_identification_updated` event expose searching, suggested,
+manual-required, completed and rejected states. A candidate must still be
+confirmed before `confirm_product_transaction` can create or map it and apply
+the immutable captured intent.
 
 ## Voice product names
 
@@ -137,8 +144,8 @@ and quantities currently stored there. Both views also expose barcodes,
 The **Status** sensor is `ready` while no journalled mutation needs a physical
 check. It becomes `attention` when a write could not be verified. Its attributes
 expose API health, recent activity, the last undoable transaction, pending voice
-confirmations, and every unresolved reconciliation record retained by the
-journal.
+confirmations, pending product-identification jobs, and every unresolved
+reconciliation record retained by the journal.
 
 The sensor is intended as a read-only dashboard and automation feed. Grocy
 remains the only stock database. Quantities are read from Grocy's per-product,
@@ -232,6 +239,40 @@ response cannot silently create a duplicate. If the barcode already belongs to
 a differently named product, the action fails closed. The older
 `confirm_product` action never changes stock; the atomic variant performs the
 captured verified add or consume immediately after confirmation.
+
+## Background product identification
+
+After Grocy and fast deterministic providers return no match, call
+`grocy_stock_manager.start_product_identification`. It stores the complete
+intent before returning `accepted: true`; the conversation lookup then runs in
+a bounded background task and cannot hold the scanner queue open.
+
+```yaml
+action: grocy_stock_manager.start_product_identification
+data:
+  barcode: "5000166157315"
+  operation: add
+  amount: 4
+  location_name: Garage L3
+  quantity_unit_name: Pack
+  request_id: garage:scanner:boot:sequence
+  source: garage_scanner
+response_variable: identification
+```
+
+Use the returned `job.job_id` in the tablet popup. Calling
+`override_product_identification` changes the durable job to `manual_required`
+immediately; any late AI response is ignored. After
+`confirm_product_transaction` returns a committed result, call
+`complete_product_identification` with that job ID and the confirmed product
+name. `reject_product_identification` records an explicit rejection without a
+stock write.
+
+Every transition fires `grocy_stock_manager_identification_updated` with the
+public job under `event.data.job`. The Status sensor's
+`pending_product_identifications` attribute is the persistent dashboard
+fallback if a Browser Mod popup is hidden, the tablet is offline, or Home
+Assistant restarts mid-lookup.
 
 ## Activity, undo, and reconciliation
 

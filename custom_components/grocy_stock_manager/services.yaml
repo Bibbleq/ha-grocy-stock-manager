@@ -453,3 +453,105 @@ merge_products:
       default: true
       selector:
         boolean:
+
+start_product_identification:
+  name: Identify unknown product in background
+  description: >-
+    Persist the complete captured scanner intent, return immediately and ask a
+    Home Assistant conversation agent to identify the barcode in the
+    background. Progress and results are emitted through
+    grocy_stock_manager_identification_updated and exposed on the Status
+    sensor. This action never changes Grocy stock.
+  fields:
+    barcode:
+      name: Barcode
+      required: true
+      selector:
+        text:
+    operation:
+      name: Captured operation
+      required: true
+      selector:
+        select:
+          options:
+            - add
+            - consume
+    amount:
+      name: Captured amount
+      default: 1
+      selector:
+        number:
+          min: 0.001
+          step: 1
+          mode: box
+    location_id:
+      name: Captured location ID
+      selector:
+        number:
+          min: 1
+          mode: box
+    location_name:
+      name: Captured location name
+      selector:
+        text:
+    quantity_unit_id:
+      name: Quantity unit ID
+      selector:
+        number:
+          min: 1
+          mode: box
+    quantity_unit_name:
+      name: Quantity unit name
+      default: Pack
+      selector:
+        text:
+    request_id:
+      name: Captured request ID
+      required: true
+      selector:
+        text:
+    source:
+      name: Source
+      default: garage_scanner
+      selector:
+        text:
+    agent_id:
+      name: Conversation agent ID
+      default: conversation.openai_conversation
+      selector:
+        text:
+
+override_product_identification:
+  name: Override product identification now
+  description: >-
+    Ignore any late AI result and move this durable job immediately to manual
+    product entry. The captured stock intent remains unchanged.
+  fields: &identification_job_fields
+    job_id:
+      name: Identification job ID
+      required: true
+      selector:
+        text:
+
+complete_product_identification:
+  name: Complete product identification
+  description: >-
+    Mark durable identification work complete after the existing verified
+    confirm_product_transaction action has committed the captured stock intent.
+  fields:
+    job_id:
+      name: Identification job ID
+      required: true
+      selector:
+        text:
+    product_name:
+      name: Confirmed product name
+      required: true
+      selector:
+        text:
+
+reject_product_identification:
+  name: Reject product identification
+  description: >-
+    Explicitly reject one durable identification job. No stock is changed.
+  fields: *identification_job_fields

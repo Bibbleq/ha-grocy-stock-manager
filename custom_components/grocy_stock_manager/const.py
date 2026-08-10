@@ -20,6 +20,10 @@ SERVICE_LIST_PRODUCT_ALIASES: Final = "list_product_aliases"
 SERVICE_MERGE_PRODUCTS: Final = "merge_products"
 SERVICE_UNDO_TRANSACTION: Final = "undo_transaction"
 SERVICE_ACKNOWLEDGE_RECONCILIATION: Final = "acknowledge_reconciliation"
+SERVICE_START_PRODUCT_IDENTIFICATION: Final = "start_product_identification"
+SERVICE_OVERRIDE_PRODUCT_IDENTIFICATION: Final = "override_product_identification"
+SERVICE_COMPLETE_PRODUCT_IDENTIFICATION: Final = "complete_product_identification"
+SERVICE_REJECT_PRODUCT_IDENTIFICATION: Final = "reject_product_identification"
 
 ATTR_BARCODE: Final = "barcode"
 ATTR_PRODUCT_ID: Final = "product_id"
@@ -42,6 +46,8 @@ ATTR_CANONICAL_NAME: Final = "canonical_name"
 ATTR_DRY_RUN: Final = "dry_run"
 ATTR_ORIGINAL_REQUEST_ID: Final = "original_request_id"
 ATTR_NOTE: Final = "note"
+ATTR_AGENT_ID: Final = "agent_id"
+ATTR_JOB_ID: Final = "job_id"
 
 STORAGE_VERSION: Final = 1
 STORAGE_KEY: Final = f"{DOMAIN}.transaction_journal"
@@ -51,3 +57,10 @@ VOICE_ALIAS_USERFIELD: Final = "voice_aliases"
 VOICE_CONFIRMATION_TTL_SECONDS: Final = 300
 VOICE_STORAGE_KEY: Final = f"{DOMAIN}.voice_confirmations"
 VOICE_STORAGE_VERSION: Final = 1
+
+DEFAULT_IDENTIFICATION_AGENT: Final = "conversation.openai_conversation"
+EVENT_IDENTIFICATION_UPDATED: Final = f"{DOMAIN}_identification_updated"
+IDENTIFICATION_TIMEOUT_SECONDS: Final = 45
+IDENTIFICATION_STORAGE_KEY: Final = f"{DOMAIN}.product_identifications"
+IDENTIFICATION_STORAGE_VERSION: Final = 1
+MAX_IDENTIFICATION_RECORDS: Final = 128
