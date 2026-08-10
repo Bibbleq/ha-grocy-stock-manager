@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
+from hashlib import sha256
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
@@ -40,7 +41,9 @@ from .const import (
     ATTR_LEARN_ALIAS,
     ATTR_LOCATION_ID,
     ATTR_LOCATION_NAME,
+    ATTR_NOTE,
     ATTR_OPERATION,
+    ATTR_ORIGINAL_REQUEST_ID,
     ATTR_PRODUCT_ID,
     ATTR_PRODUCT_ID_TO_KEEP,
     ATTR_PRODUCT_ID_TO_REMOVE,
@@ -51,8 +54,10 @@ from .const import (
     ATTR_REQUEST_ID,
     ATTR_SOURCE,
     DOMAIN,
+    SERVICE_ACKNOWLEDGE_RECONCILIATION,
     SERVICE_ADD,
     SERVICE_CONFIRM_PRODUCT,
+    SERVICE_CONFIRM_PRODUCT_TRANSACTION,
     SERVICE_CONFIRM_VOICE_TRANSACTION,
     SERVICE_CONSUME,
     SERVICE_LEARN_PRODUCT_ALIAS,
@@ -61,6 +66,7 @@ from .const import (
     SERVICE_MERGE_PRODUCTS,
     SERVICE_REMOVE_PRODUCT_ALIAS,
     SERVICE_RESOLVE_PRODUCT_PHRASE,
+    SERVICE_UNDO_TRANSACTION,
     SERVICE_VOICE_TRANSACTION,
 )
 from .merges import (
@@ -206,6 +212,42 @@ CONFIRM_PRODUCT_SCHEMA = vol.All(
 )
 
 
+CONFIRM_PRODUCT_TRANSACTION_SCHEMA = vol.All(
+    vol.Schema(
+        {
+            vol.Required(ATTR_BARCODE): vol.All(
+                _non_empty_string, vol.Length(max=128)
+            ),
+            vol.Required(ATTR_PRODUCT_NAME): vol.All(
+                _non_empty_string, vol.Length(max=255)
+            ),
+            vol.Required(ATTR_OPERATION): vol.In(("add", "consume")),
+            vol.Required(ATTR_AMOUNT, default=Decimal("1")): _positive_decimal,
+            vol.Optional(ATTR_LOCATION_ID): vol.All(
+                vol.Coerce(int), vol.Range(min=1)
+            ),
+            vol.Optional(ATTR_LOCATION_NAME): vol.All(
+                _non_empty_string, vol.Length(max=255)
+            ),
+            vol.Optional(ATTR_QUANTITY_UNIT_ID): vol.All(
+                vol.Coerce(int), vol.Range(min=1)
+            ),
+            vol.Optional(ATTR_QUANTITY_UNIT_NAME): vol.All(
+                _non_empty_string, vol.Length(max=255)
+            ),
+            vol.Required(ATTR_REQUEST_ID): vol.All(
+                _non_empty_string, vol.Length(max=128)
+            ),
+            vol.Optional(ATTR_SOURCE, default="home_assistant_confirm"): vol.All(
+                _non_empty_string, vol.Length(max=64)
+            ),
+        }
+    ),
+    _at_most_one_location,
+    _at_most_one_quantity_unit,
+)
+
+
 RESOLVE_PRODUCT_PHRASE_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_PRODUCT_PHRASE): vol.All(
@@ -295,6 +337,25 @@ MERGE_PRODUCTS_SCHEMA = vol.Schema(
             _non_empty_string, vol.Length(max=128)
         ),
         vol.Optional(ATTR_DRY_RUN, default=True): cv.boolean,
+    }
+)
+
+
+UNDO_TRANSACTION_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_ORIGINAL_REQUEST_ID): vol.All(
+            _non_empty_string, vol.Length(max=128)
+        )
+    }
+)
+
+
+ACKNOWLEDGE_RECONCILIATION_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_ORIGINAL_REQUEST_ID): vol.All(
+            _non_empty_string, vol.Length(max=128)
+        ),
+        vol.Required(ATTR_NOTE): vol.All(_non_empty_string, vol.Length(max=255)),
     }
 )
 
@@ -578,6 +639,280 @@ async def _async_confirm_product(
             translation_domain=DOMAIN,
             translation_key="cannot_connect_runtime",
         ) from err
+
+
+def _transaction_rejection(
+    error: Exception,
+    *,
+    operation: str,
+    request_id: str,
+    source: str,
+    catalogue: dict[str, Any] | None = None,
+) -> ServiceResponse:
+    """Return a stable fail-closed response for an expected stock rejection."""
+    if isinstance(error, TransactionLocationNotFoundError):
+        code = "location_not_found"
+        message = "No usable stock location could be resolved."
+    elif isinstance(error, TransactionLocationAmbiguousError):
+        code = "location_ambiguous"
+        message = "The product is stocked in more than one possible location."
+    elif isinstance(error, TransactionInsufficientStockError):
+        code = "insufficient_stock"
+        message = "The selected location does not contain enough stock."
+    else:
+        code = "request_id_conflict"
+        message = "That request ID was already used for different work."
+    return {
+        "response_version": 1,
+        "success": False,
+        "status": "rejected",
+        "outcome": "rejected",
+        "stock_changed": False,
+        "operation": operation,
+        "request_id": request_id,
+        "source": source,
+        "error_code": code,
+        "message": f"{message} No stock was changed.",
+        "requires_reconciliation": False,
+        "catalogue": catalogue,
+    }
+
+
+async def _async_confirm_product_transaction(
+    entry: GrocyStockManagerConfigEntry,
+    call: ServiceCall,
+) -> ServiceResponse:
+    """Confirm catalogue identity and execute the originally captured intent."""
+    catalogue: dict[str, Any] | None = None
+    try:
+        catalogue = await entry.runtime_data.catalogue.async_confirm_product(
+            barcode=call.data[ATTR_BARCODE],
+            product_name=call.data[ATTR_PRODUCT_NAME],
+            location_id=call.data.get(ATTR_LOCATION_ID),
+            location_name=call.data.get(ATTR_LOCATION_NAME),
+            quantity_unit_id=call.data.get(ATTR_QUANTITY_UNIT_ID),
+            quantity_unit_name=call.data.get(ATTR_QUANTITY_UNIT_NAME),
+        )
+        lookup = await entry.runtime_data.resolver.async_lookup_by_barcode(
+            call.data[ATTR_BARCODE]
+        )
+        transaction = await entry.runtime_data.transactions.async_execute(
+            call.data[ATTR_OPERATION],
+            lookup,
+            amount=call.data[ATTR_AMOUNT],
+            request_id=call.data[ATTR_REQUEST_ID],
+            location_id=call.data.get(ATTR_LOCATION_ID),
+            location_name=call.data.get(ATTR_LOCATION_NAME),
+            source=call.data[ATTR_SOURCE],
+        )
+        _request_inventory_refresh(entry, call.hass)
+        return {
+            "response_version": 1,
+            "success": transaction.get("outcome") == "committed",
+            "status": transaction.get("outcome"),
+            "stock_changed": transaction.get("outcome") == "committed",
+            "catalogue": catalogue,
+            "transaction": transaction,
+        }
+    except (
+        TransactionLocationNotFoundError,
+        TransactionLocationAmbiguousError,
+        TransactionInsufficientStockError,
+        TransactionRequestConflictError,
+    ) as err:
+        _request_inventory_refresh(entry, call.hass)
+        return _transaction_rejection(
+            err,
+            operation=call.data[ATTR_OPERATION],
+            request_id=call.data[ATTR_REQUEST_ID],
+            source=call.data[ATTR_SOURCE],
+            catalogue=catalogue,
+        )
+    except CatalogueBarcodeConflictError as err:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="barcode_conflict",
+        ) from err
+    except CatalogueLocationNotFoundError as err:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="catalogue_location_not_found",
+            translation_placeholders={
+                "requested": err.requested,
+                "available": ", ".join(err.available_names) or "none",
+            },
+        ) from err
+    except CatalogueQuantityUnitNotFoundError as err:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="quantity_unit_not_found",
+            translation_placeholders={
+                "requested": err.requested,
+                "available": ", ".join(err.available_names) or "none",
+            },
+        ) from err
+    except GrocyInvalidAuthError as err:
+        entry.async_start_reauth_if_available(call.hass)
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="invalid_auth_runtime",
+        ) from err
+    except GrocyMutationOutcomeUnknownError as err:
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="catalogue_outcome_unknown",
+        ) from err
+    except GrocyInvalidResponseError as err:
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="invalid_response_runtime",
+        ) from err
+    except (GrocyCannotConnectError, GrocyApiError) as err:
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="cannot_connect_runtime",
+        ) from err
+
+
+async def _async_undo_transaction(
+    entry: GrocyStockManagerConfigEntry,
+    call: ServiceCall,
+) -> ServiceResponse:
+    """Compensate one exact committed stock mutation once."""
+    original_id = call.data[ATTR_ORIGINAL_REQUEST_ID]
+    original = await entry.runtime_data.journal.async_get(original_id)
+    if original is None:
+        return {
+            "response_version": 1,
+            "success": False,
+            "status": "rejected",
+            "error_code": "transaction_not_found",
+            "message": "That transaction is no longer in the activity journal.",
+            "stock_changed": False,
+        }
+    result = original["result"]
+    if result.get("undone_by"):
+        return {
+            "response_version": 1,
+            "success": False,
+            "status": "rejected",
+            "error_code": "already_undone",
+            "message": "That transaction has already been undone.",
+            "stock_changed": False,
+            "undone_by": result["undone_by"],
+        }
+    if (
+        result.get("outcome") != "committed"
+        or result.get("operation") not in {"add", "consume"}
+        or result.get("requires_reconciliation")
+        or result.get("undo_of")
+    ):
+        return {
+            "response_version": 1,
+            "success": False,
+            "status": "rejected",
+            "error_code": "transaction_not_undoable",
+            "message": "Only a verified add or consume can be undone.",
+            "stock_changed": False,
+        }
+
+    undo_operation = "consume" if result["operation"] == "add" else "add"
+    undo_id = f"undo:{sha256(original_id.encode()).hexdigest()[:32]}"
+    try:
+        lookup = await entry.runtime_data.resolver.async_lookup_by_product_id(
+            int(result["product_id"])
+        )
+        transaction = await entry.runtime_data.transactions.async_execute(
+            undo_operation,
+            lookup,
+            amount=Decimal(str(result["amount"])),
+            request_id=undo_id,
+            location_id=int(result["location_id"]),
+            location_name=None,
+            source=f"undo:{str(result.get('source', 'unknown'))}"[:64],
+        )
+    except (
+        TransactionLocationNotFoundError,
+        TransactionLocationAmbiguousError,
+        TransactionInsufficientStockError,
+        TransactionRequestConflictError,
+    ) as err:
+        return _transaction_rejection(
+            err,
+            operation=undo_operation,
+            request_id=undo_id,
+            source="undo",
+        )
+    except GrocyNotFoundError as err:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="product_not_found",
+            translation_placeholders={
+                "identifier": f"product ID {result['product_id']}"
+            },
+        ) from err
+    except GrocyInvalidAuthError as err:
+        entry.async_start_reauth_if_available(call.hass)
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="invalid_auth_runtime",
+        ) from err
+    except GrocyInvalidResponseError as err:
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="invalid_response_runtime",
+        ) from err
+    except (GrocyCannotConnectError, GrocyApiError) as err:
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="cannot_connect_runtime",
+        ) from err
+
+    if transaction.get("outcome") == "committed":
+        await entry.runtime_data.journal.async_update_result(
+            undo_id, {"undo_of": original_id}
+        )
+        await entry.runtime_data.journal.async_update_result(
+            original_id, {"undone_by": undo_id}
+        )
+        transaction = {
+            **transaction,
+            "undo_of": original_id,
+        }
+    _request_inventory_refresh(entry, call.hass)
+    return {
+        "response_version": 1,
+        "success": transaction.get("outcome") == "committed",
+        "status": transaction.get("outcome"),
+        "stock_changed": transaction.get("outcome") == "committed",
+        "original_request_id": original_id,
+        "transaction": transaction,
+    }
+
+
+async def _async_acknowledge_reconciliation(
+    entry: GrocyStockManagerConfigEntry,
+    call: ServiceCall,
+) -> ServiceResponse:
+    """Clear a health latch only after an explicit human reconciliation."""
+    result = await entry.runtime_data.journal.async_acknowledge_reconciliation(
+        call.data[ATTR_ORIGINAL_REQUEST_ID], call.data[ATTR_NOTE]
+    )
+    if result is None:
+        return {
+            "response_version": 1,
+            "success": False,
+            "status": "rejected",
+            "message": "No unresolved transaction matched that request ID.",
+        }
+    _request_inventory_refresh(entry, call.hass)
+    return {
+        "response_version": 1,
+        "success": True,
+        "status": "reconciled",
+        "request_id": call.data[ATTR_ORIGINAL_REQUEST_ID],
+        "result": result,
+    }
 
 
 async def _async_resolve_product_phrase(
@@ -980,6 +1315,11 @@ def async_setup_services(
     async def async_confirm_product(call: ServiceCall) -> ServiceResponse:
         return await _async_confirm_product(entry, call)
 
+    async def async_confirm_product_transaction(
+        call: ServiceCall,
+    ) -> ServiceResponse:
+        return await _async_confirm_product_transaction(entry, call)
+
     async def async_resolve_product_phrase(call: ServiceCall) -> ServiceResponse:
         return await _async_resolve_product_phrase(entry, call)
 
@@ -1002,6 +1342,14 @@ def async_setup_services(
 
     async def async_merge_products(call: ServiceCall) -> ServiceResponse:
         return await _async_merge_products(entry, call)
+
+    async def async_undo_transaction(call: ServiceCall) -> ServiceResponse:
+        return await _async_undo_transaction(entry, call)
+
+    async def async_acknowledge_reconciliation(
+        call: ServiceCall,
+    ) -> ServiceResponse:
+        return await _async_acknowledge_reconciliation(entry, call)
 
     hass.services.async_register(
         DOMAIN,
@@ -1029,6 +1377,13 @@ def async_setup_services(
         SERVICE_CONFIRM_PRODUCT,
         async_confirm_product,
         schema=CONFIRM_PRODUCT_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CONFIRM_PRODUCT_TRANSACTION,
+        async_confirm_product_transaction,
+        schema=CONFIRM_PRODUCT_TRANSACTION_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
@@ -1080,6 +1435,20 @@ def async_setup_services(
         schema=MERGE_PRODUCTS_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_UNDO_TRANSACTION,
+        async_undo_transaction,
+        schema=UNDO_TRANSACTION_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_ACKNOWLEDGE_RECONCILIATION,
+        async_acknowledge_reconciliation,
+        schema=ACKNOWLEDGE_RECONCILIATION_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
 
 
 @callback
@@ -1089,6 +1458,7 @@ def async_unload_services(hass: HomeAssistant) -> None:
     hass.services.async_remove(DOMAIN, SERVICE_ADD)
     hass.services.async_remove(DOMAIN, SERVICE_CONSUME)
     hass.services.async_remove(DOMAIN, SERVICE_CONFIRM_PRODUCT)
+    hass.services.async_remove(DOMAIN, SERVICE_CONFIRM_PRODUCT_TRANSACTION)
     hass.services.async_remove(DOMAIN, SERVICE_RESOLVE_PRODUCT_PHRASE)
     hass.services.async_remove(DOMAIN, SERVICE_VOICE_TRANSACTION)
     hass.services.async_remove(DOMAIN, SERVICE_CONFIRM_VOICE_TRANSACTION)
@@ -1096,3 +1466,5 @@ def async_unload_services(hass: HomeAssistant) -> None:
     hass.services.async_remove(DOMAIN, SERVICE_REMOVE_PRODUCT_ALIAS)
     hass.services.async_remove(DOMAIN, SERVICE_LIST_PRODUCT_ALIASES)
     hass.services.async_remove(DOMAIN, SERVICE_MERGE_PRODUCTS)
+    hass.services.async_remove(DOMAIN, SERVICE_UNDO_TRANSACTION)
+    hass.services.async_remove(DOMAIN, SERVICE_ACKNOWLEDGE_RECONCILIATION)

@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from collections import OrderedDict
 from collections.abc import Mapping
+from copy import deepcopy
+from datetime import UTC, datetime
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -45,13 +47,26 @@ class TransactionJournal:
                     "request_id": request_id,
                     "fingerprint": fingerprint,
                     "result": result,
+                    "recorded_at": item.get("recorded_at"),
                 }
 
     async def async_get(self, request_id: str) -> dict[str, Any] | None:
         """Return one immutable-copy record if it exists."""
         async with self._lock:
             record = self._records.get(request_id)
-            return dict(record) if record is not None else None
+            return deepcopy(record) if record is not None else None
+
+    def snapshot(self, *, limit: int = 20) -> list[dict[str, Any]]:
+        """Return newest journal results for entities and diagnostics."""
+        records = list(self._records.values())[-limit:]
+        return [
+            {
+                "request_id": item["request_id"],
+                "recorded_at": item.get("recorded_at"),
+                **deepcopy(item["result"]),
+            }
+            for item in reversed(records)
+        ]
 
     async def async_record(
         self, request_id: str, fingerprint: str, result: dict[str, Any]
@@ -63,7 +78,38 @@ class TransactionJournal:
                 "request_id": request_id,
                 "fingerprint": fingerprint,
                 "result": dict(result),
+                "recorded_at": datetime.now(UTC).isoformat(),
             }
             while len(self._records) > MAX_JOURNAL_RECORDS:
                 self._records.popitem(last=False)
             await self._store.async_save({"records": list(self._records.values())})
+
+    async def async_update_result(
+        self, request_id: str, changes: Mapping[str, Any]
+    ) -> dict[str, Any] | None:
+        """Annotate an existing result without changing its idempotency fingerprint."""
+        async with self._lock:
+            record = self._records.get(request_id)
+            if record is None:
+                return None
+            result = dict(record["result"])
+            result.update(changes)
+            record["result"] = result
+            await self._store.async_save({"records": list(self._records.values())})
+            return deepcopy(result)
+
+    async def async_acknowledge_reconciliation(
+        self, request_id: str, note: str
+    ) -> dict[str, Any] | None:
+        """Record an explicit human reconciliation of an uncertain outcome."""
+        record = await self.async_get(request_id)
+        if record is None or not record["result"].get("requires_reconciliation"):
+            return None
+        return await self.async_update_result(
+            request_id,
+            {
+                "requires_reconciliation": False,
+                "reconciled_at": datetime.now(UTC).isoformat(),
+                "reconciliation_note": note,
+            },
+        )
