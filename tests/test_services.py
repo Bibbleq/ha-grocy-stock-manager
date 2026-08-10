@@ -11,11 +11,17 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.grocy_stock_manager.const import (
     ATTR_AMOUNT,
     ATTR_BARCODE,
+    ATTR_LOCATION_ID,
+    ATTR_OPERATION,
+    ATTR_ORIGINAL_REQUEST_ID,
     ATTR_PRODUCT_ID,
+    ATTR_PRODUCT_NAME,
     ATTR_REQUEST_ID,
     ATTR_SOURCE,
     DOMAIN,
+    SERVICE_ACKNOWLEDGE_RECONCILIATION,
     SERVICE_CONFIRM_PRODUCT,
+    SERVICE_CONFIRM_PRODUCT_TRANSACTION,
     SERVICE_CONFIRM_VOICE_TRANSACTION,
     SERVICE_LEARN_PRODUCT_ALIAS,
     SERVICE_LIST_PRODUCT_ALIASES,
@@ -23,6 +29,7 @@ from custom_components.grocy_stock_manager.const import (
     SERVICE_MERGE_PRODUCTS,
     SERVICE_REMOVE_PRODUCT_ALIAS,
     SERVICE_RESOLVE_PRODUCT_PHRASE,
+    SERVICE_UNDO_TRANSACTION,
     SERVICE_VOICE_TRANSACTION,
 )
 from custom_components.grocy_stock_manager.inventory import (
@@ -35,7 +42,11 @@ from custom_components.grocy_stock_manager.models import (
     parse_stock_locations,
 )
 from custom_components.grocy_stock_manager.resolver import GrocyProductResolver
-from custom_components.grocy_stock_manager.services import _async_mutate
+from custom_components.grocy_stock_manager.services import (
+    _async_confirm_product_transaction,
+    _async_mutate,
+    _async_undo_transaction,
+)
 from custom_components.grocy_stock_manager.transactions import (
     TransactionLocationAmbiguousError,
 )
@@ -141,6 +152,7 @@ async def test_lookup_action_returns_data_and_unloads(hass: HomeAssistant) -> No
 
         assert hass.services.has_service(DOMAIN, SERVICE_LOOKUP)
         assert hass.services.has_service(DOMAIN, SERVICE_CONFIRM_PRODUCT)
+        assert hass.services.has_service(DOMAIN, SERVICE_CONFIRM_PRODUCT_TRANSACTION)
         assert hass.services.has_service(DOMAIN, SERVICE_RESOLVE_PRODUCT_PHRASE)
         assert hass.services.has_service(DOMAIN, SERVICE_VOICE_TRANSACTION)
         assert hass.services.has_service(DOMAIN, SERVICE_CONFIRM_VOICE_TRANSACTION)
@@ -148,6 +160,8 @@ async def test_lookup_action_returns_data_and_unloads(hass: HomeAssistant) -> No
         assert hass.services.has_service(DOMAIN, SERVICE_REMOVE_PRODUCT_ALIAS)
         assert hass.services.has_service(DOMAIN, SERVICE_LIST_PRODUCT_ALIASES)
         assert hass.services.has_service(DOMAIN, SERVICE_MERGE_PRODUCTS)
+        assert hass.services.has_service(DOMAIN, SERVICE_UNDO_TRANSACTION)
+        assert hass.services.has_service(DOMAIN, SERVICE_ACKNOWLEDGE_RECONCILIATION)
         response = await hass.services.async_call(
             DOMAIN,
             SERVICE_LOOKUP,
@@ -165,6 +179,7 @@ async def test_lookup_action_returns_data_and_unloads(hass: HomeAssistant) -> No
     assert await hass.config_entries.async_unload(entry.entry_id)
     assert not hass.services.has_service(DOMAIN, SERVICE_LOOKUP)
     assert not hass.services.has_service(DOMAIN, SERVICE_CONFIRM_PRODUCT)
+    assert not hass.services.has_service(DOMAIN, SERVICE_CONFIRM_PRODUCT_TRANSACTION)
     assert not hass.services.has_service(DOMAIN, SERVICE_RESOLVE_PRODUCT_PHRASE)
     assert not hass.services.has_service(DOMAIN, SERVICE_VOICE_TRANSACTION)
     assert not hass.services.has_service(DOMAIN, SERVICE_CONFIRM_VOICE_TRANSACTION)
@@ -172,3 +187,112 @@ async def test_lookup_action_returns_data_and_unloads(hass: HomeAssistant) -> No
     assert not hass.services.has_service(DOMAIN, SERVICE_REMOVE_PRODUCT_ALIAS)
     assert not hass.services.has_service(DOMAIN, SERVICE_LIST_PRODUCT_ALIASES)
     assert not hass.services.has_service(DOMAIN, SERVICE_MERGE_PRODUCTS)
+    assert not hass.services.has_service(DOMAIN, SERVICE_UNDO_TRANSACTION)
+    assert not hass.services.has_service(DOMAIN, SERVICE_ACKNOWLEDGE_RECONCILIATION)
+
+
+async def test_confirm_product_transaction_preserves_original_consume_intent() -> None:
+    """Identifying an unknown barcode cannot silently turn consume into add."""
+    lookup_result = ProductLookupResult(
+        lookup_type="barcode",
+        lookup_value="12345670",
+        product=ProductDetails.from_payload(PRODUCT_DETAILS),
+        stock_locations=parse_stock_locations(STOCK_LOCATIONS),
+    )
+    catalogue = AsyncMock()
+    catalogue.async_confirm_product.return_value = {"status": "created"}
+    resolver = SimpleNamespace(
+        async_lookup_by_barcode=AsyncMock(return_value=lookup_result)
+    )
+    transactions = AsyncMock()
+    transactions.async_execute.return_value = {
+        "outcome": "committed",
+        "operation": "consume",
+    }
+    coordinator = AsyncMock()
+    entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(
+            catalogue=catalogue,
+            resolver=resolver,
+            transactions=transactions,
+            coordinator=coordinator,
+        )
+    )
+    hass = SimpleNamespace(async_create_task=lambda coroutine: coroutine.close())
+    call = SimpleNamespace(
+        hass=hass,
+        data={
+            ATTR_BARCODE: "12345670",
+            ATTR_PRODUCT_NAME: "Desk test item",
+            ATTR_OPERATION: "consume",
+            ATTR_AMOUNT: Decimal("1"),
+            ATTR_LOCATION_ID: 12,
+            ATTR_REQUEST_ID: "scan-unknown-consume-1",
+            ATTR_SOURCE: "garage_scanner",
+        },
+    )
+
+    response = await _async_confirm_product_transaction(entry, call)
+
+    assert response["success"] is True
+    transactions.async_execute.assert_awaited_once_with(
+        "consume",
+        lookup_result,
+        amount=Decimal("1"),
+        request_id="scan-unknown-consume-1",
+        location_id=12,
+        location_name=None,
+        source="garage_scanner",
+    )
+
+
+async def test_undo_transaction_applies_exact_opposite_once() -> None:
+    """Undo uses the same product, amount and shelf with the opposite operation."""
+    lookup_result = ProductLookupResult(
+        lookup_type="product_id",
+        lookup_value=1,
+        product=ProductDetails.from_payload(PRODUCT_DETAILS),
+        stock_locations=parse_stock_locations(STOCK_LOCATIONS),
+    )
+    journal = AsyncMock()
+    journal.async_get.return_value = {
+        "result": {
+            "outcome": "committed",
+            "operation": "consume",
+            "product_id": 1,
+            "location_id": 12,
+            "amount": 2,
+            "source": "garage_voice",
+            "requires_reconciliation": False,
+        }
+    }
+    resolver = SimpleNamespace(
+        async_lookup_by_product_id=AsyncMock(return_value=lookup_result)
+    )
+    transactions = AsyncMock()
+    transactions.async_execute.return_value = {
+        "outcome": "committed",
+        "operation": "add",
+    }
+    entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(
+            journal=journal,
+            resolver=resolver,
+            transactions=transactions,
+            coordinator=AsyncMock(),
+        )
+    )
+    call = SimpleNamespace(
+        hass=SimpleNamespace(async_create_task=lambda coroutine: coroutine.close()),
+        data={ATTR_ORIGINAL_REQUEST_ID: "voice-consume-1"},
+    )
+
+    response = await _async_undo_transaction(entry, call)
+
+    assert response["success"] is True
+    assert response["transaction"]["undo_of"] == "voice-consume-1"
+    transaction_call = transactions.async_execute.await_args
+    assert transaction_call.args[:2] == ("add", lookup_result)
+    assert transaction_call.kwargs["amount"] == Decimal("2")
+    assert transaction_call.kwargs["location_id"] == 12
+    assert journal.async_update_result.await_count == 2

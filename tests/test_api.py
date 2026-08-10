@@ -212,6 +212,7 @@ async def test_get_product_stock_locations_requires_an_array() -> None:
 async def test_read_only_location_and_stock_entry_routes() -> None:
     """The client exposes the remaining Phase 2 read endpoints."""
     locations = [{"id": "12", "name": "Garage Synthetic"}]
+    barcodes = [{"product_id": "1", "barcode": "001234"}]
     entries = [
         {
             "id": "4",
@@ -223,14 +224,17 @@ async def test_read_only_location_and_stock_entry_routes() -> None:
     ]
     session = FakeSession(
         FakeResponse(200, locations),
+        FakeResponse(200, barcodes),
         FakeResponse(200, entries),
     )
     client = GrocyApiClient(session, "http://grocy.local:9192", "secret")
 
     assert await client.async_get_locations() == locations
+    assert await client.async_get_product_barcodes() == barcodes
     assert await client.async_get_product_stock_entries(1) == entries
     assert session.requests[0][0].endswith("/api/objects/locations")
-    assert session.requests[1][0].endswith("/api/stock/products/1/entries")
+    assert session.requests[1][0].endswith("/api/objects/product_barcodes")
+    assert session.requests[2][0].endswith("/api/stock/products/1/entries")
 
 
 async def test_add_and_consume_use_explicit_location_payloads() -> None:

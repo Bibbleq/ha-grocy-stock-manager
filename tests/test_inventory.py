@@ -8,8 +8,18 @@ class FakeInventoryClient:
 
     async def async_get_products(self):
         return [
-            {"id": "2", "name": "Hair gel", "qu_id_stock": "1"},
-            {"id": "1", "name": "Cat litter", "qu_id_stock": "1"},
+            {
+                "id": "2",
+                "name": "Hair gel",
+                "qu_id_stock": "1",
+                "userfields": {"voice_aliases": "styling gel"},
+            },
+            {
+                "id": "1",
+                "name": "Cat litter",
+                "qu_id_stock": "1",
+                "userfields": {"voice_aliases": "kitty litter\nlitter"},
+            },
             {"id": "3", "name": "Empty product", "qu_id_stock": "1"},
         ]
 
@@ -22,6 +32,12 @@ class FakeInventoryClient:
 
     async def async_get_quantity_units(self):
         return [{"id": "1", "name": "Pack", "name_plural": "Packs"}]
+
+    async def async_get_product_barcodes(self):
+        return [
+            {"product_id": "1", "barcode": "04260066669009"},
+            {"product_id": "2", "barcode": "12345670"},
+        ]
 
     async def async_get_product_stock_locations(self, product_id: int):
         return {
@@ -65,6 +81,9 @@ async def test_snapshot_groups_stock_by_product_and_location() -> None:
         "product_id": 1,
         "product_name": "Cat litter",
         "quantity_unit": "Pack",
+        "barcodes": ["04260066669009"],
+        "voice_aliases": ["kitty litter", "litter"],
+        "search_text": "cat litter kitty litter litter 04260066669009",
         "stock_total": 3,
         "locations": [
             {
@@ -91,3 +110,6 @@ async def test_snapshot_groups_stock_by_product_and_location() -> None:
         "products": [],
     }
     assert attributes["locations"][0]["products"][1]["amount"] == 0.5
+    assert attributes["locations"][0]["products"][1]["search_text"] == (
+        "hair gel styling gel 12345670"
+    )

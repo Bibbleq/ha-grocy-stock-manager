@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
 from .api import GrocyApiClient, GrocyInvalidResponseError, GrocyNotFoundError
 from .models import parse_stock_locations
+from .voice import normalise_product_phrase, parse_alias_value
 
 _MAX_CONCURRENT_REQUESTS = 8
 
@@ -59,6 +61,8 @@ class InventoryProduct:
     product_id: int
     product_name: str
     quantity_unit: str
+    barcodes: tuple[str, ...]
+    voice_aliases: tuple[str, ...]
     stock_total: Decimal
     locations: tuple[InventoryProductLocation, ...]
 
@@ -68,6 +72,15 @@ class InventoryProduct:
             "product_id": self.product_id,
             "product_name": self.product_name,
             "quantity_unit": self.quantity_unit,
+            "barcodes": list(self.barcodes),
+            "voice_aliases": list(self.voice_aliases),
+            "search_text": " ".join(
+                (
+                    normalise_product_phrase(self.product_name),
+                    *self.voice_aliases,
+                    *self.barcodes,
+                )
+            ),
             "stock_total": _response_number(self.stock_total),
             "locations": [location.as_dict() for location in self.locations],
         }
@@ -80,6 +93,8 @@ class InventoryLocationProduct:
     product_id: int
     product_name: str
     quantity_unit: str
+    barcodes: tuple[str, ...]
+    voice_aliases: tuple[str, ...]
     amount: Decimal
 
     def as_dict(self) -> dict[str, Any]:
@@ -88,6 +103,15 @@ class InventoryLocationProduct:
             "product_id": self.product_id,
             "product_name": self.product_name,
             "quantity_unit": self.quantity_unit,
+            "barcodes": list(self.barcodes),
+            "voice_aliases": list(self.voice_aliases),
+            "search_text": " ".join(
+                (
+                    normalise_product_phrase(self.product_name),
+                    *self.voice_aliases,
+                    *self.barcodes,
+                )
+            ),
             "amount": _response_number(self.amount),
         }
 
@@ -146,10 +170,16 @@ class GrocyInventory:
 
     async def async_snapshot(self) -> InventorySnapshot:
         """Return current positive stock grouped by product and location."""
-        raw_products, raw_locations, raw_quantity_units = await asyncio.gather(
+        (
+            raw_products,
+            raw_locations,
+            raw_quantity_units,
+            raw_barcodes,
+        ) = await asyncio.gather(
             self._client.async_get_products(),
             self._client.async_get_locations(),
             self._client.async_get_quantity_units(),
+            self._client.async_get_product_barcodes(),
         )
 
         quantity_units = {
@@ -158,6 +188,14 @@ class GrocyInventory:
             )
             for item in raw_quantity_units
         }
+        barcodes_by_product: dict[int, list[str]] = {}
+        for item in raw_barcodes:
+            product_id = _integer(
+                item.get("product_id"), "product_barcodes[].product_id"
+            )
+            barcode = _string(item.get("barcode"), "product_barcodes[].barcode")
+            barcodes_by_product.setdefault(product_id, []).append(barcode)
+
         product_summaries = [
             (
                 _integer(item.get("id"), "products[].id"),
@@ -165,6 +203,18 @@ class GrocyInventory:
                 quantity_units.get(
                     _integer(item.get("qu_id_stock"), "products[].qu_id_stock"),
                     "unit",
+                ),
+                tuple(
+                    sorted(
+                        barcodes_by_product.get(
+                            _integer(item.get("id"), "products[].id"), []
+                        )
+                    )
+                ),
+                parse_alias_value(
+                    item.get("userfields", {}).get("voice_aliases")
+                    if isinstance(item.get("userfields"), Mapping)
+                    else None
                 ),
             )
             for item in raw_products
@@ -176,6 +226,8 @@ class GrocyInventory:
             product_id: int,
             product_name: str,
             quantity_unit: str,
+            barcodes: tuple[str, ...],
+            voice_aliases: tuple[str, ...],
         ) -> InventoryProduct | None:
             async with semaphore:
                 try:
@@ -200,6 +252,8 @@ class GrocyInventory:
                 product_id=product_id,
                 product_name=product_name,
                 quantity_unit=quantity_unit,
+                barcodes=barcodes,
+                voice_aliases=voice_aliases,
                 stock_total=sum(
                     (location.amount for location in locations), Decimal("0")
                 ),
@@ -208,8 +262,20 @@ class GrocyInventory:
 
         fetched_products = await asyncio.gather(
             *(
-                async_product_stock(product_id, product_name, quantity_unit)
-                for product_id, product_name, quantity_unit in product_summaries
+                async_product_stock(
+                    product_id,
+                    product_name,
+                    quantity_unit,
+                    barcodes,
+                    voice_aliases,
+                )
+                for (
+                    product_id,
+                    product_name,
+                    quantity_unit,
+                    barcodes,
+                    voice_aliases,
+                ) in product_summaries
             )
         )
         products = tuple(
@@ -230,6 +296,8 @@ class GrocyInventory:
                         product_id=product.product_id,
                         product_name=product.product_name,
                         quantity_unit=product.quantity_unit,
+                        barcodes=product.barcodes,
+                        voice_aliases=product.voice_aliases,
                         amount=location.amount,
                     )
                 )

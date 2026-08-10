@@ -41,6 +41,8 @@ The current build provides:
 - A response-only `grocy_stock_manager.lookup` Home Assistant action.
 - A confirmation-only `grocy_stock_manager.confirm_product` action which
   creates a product or maps an additional barcode without changing stock.
+- An atomic `confirm_product_transaction` action which preserves an unknown
+  scan's original add or consume intent through human confirmation.
 - Verified `grocy_stock_manager.add` and `grocy_stock_manager.consume` actions.
 - Mandatory request IDs with a durable 256-result idempotency journal.
 - Per-product locks and a fresh pre-write stock baseline.
@@ -50,12 +52,17 @@ The current build provides:
   stock but verification was not possible.
 - Fail-closed spoken-name resolution with canonical matches, Grocy-backed
   aliases, and live-stock-aware clarification candidates.
-- Short-lived confirmation tokens which can only select from the products that
-  were actually offered.
+- Restart-safe, five-minute confirmation intents which can only select from the
+  products that were actually offered.
 - Read-merge-write-verify alias learning through the product `voice_aliases`
   userfield; duplicate aliases never resolve automatically.
 - A read-only inventory sensor with product totals and authoritative per-location
-  quantities for dashboards and automations.
+  quantities, barcodes, aliases, and searchable text for dashboards and
+  automations.
+- A Status sensor with recent activity, pending voice confirmations, API health,
+  and a persistent reconciliation-required latch.
+- A one-shot `undo_transaction` action for verified adds and consumes, plus an
+  explicit `acknowledge_reconciliation` action after a physical stock check.
 - Five-minute inventory polling plus an immediate refresh request after
   successful scanner or voice stock transactions.
 - Automated tests, Ruff linting, hassfest, and HACS validation.
@@ -63,9 +70,10 @@ The current build provides:
 Unknown-barcode enrichment remains a separate asynchronous subsystem. Grocy is
 always checked first; only an unknown barcode enters the deterministic provider
 cascade, with AI as the final optional provider. A candidate must be confirmed
-before `confirm_product` can create or map it. Stock is then changed through the
-normal verified `add` action, keeping catalogue setup and inventory transactions
-as two visible, independently recoverable steps.
+before `confirm_product_transaction` can create or map it and apply the
+immutable operation, quantity, shelf, and request ID captured at scan time. This
+prevents an unknown Consume scan from accidentally becoming an Add while the
+tablet is asking for a product name.
 
 ## Voice product names
 
@@ -92,8 +100,9 @@ changed.
 
 Call `grocy_stock_manager.voice_transaction` with the speech parser's product
 phrase. Exact canonical names and unique learned aliases use the normal verified
-transaction engine. A similar name only returns candidates and a 60-second
-confirmation token; it never changes stock.
+transaction engine. Natural singular container prefixes such as "a bottle of"
+and "a can of" are ignored for matching. A similar name only returns candidates
+and a restart-safe five-minute confirmation token; it never changes stock.
 
 ```yaml
 action: grocy_stock_manager.voice_transaction
@@ -122,7 +131,14 @@ The integration creates an **Inventory** sensor whose state is the number of
 distinct products currently in stock. Its `products` attribute contains each
 product's total and all stocked locations. Its `locations` attribute contains
 every configured Grocy location, including empty locations, with the products
-and quantities currently stored there.
+and quantities currently stored there. Both views also expose barcodes,
+`voice_aliases`, and a normalised `search_text` value for tablet search.
+
+The **Status** sensor is `ready` while no journalled mutation needs a physical
+check. It becomes `attention` when a write could not be verified. Its attributes
+expose API health, recent activity, the last undoable transaction, pending voice
+confirmations, and every unresolved reconciliation record retained by the
+journal.
 
 The sensor is intended as a read-only dashboard and automation feed. Grocy
 remains the only stock database. Quantities are read from Grocy's per-product,
@@ -194,9 +210,12 @@ write to Grocy and do not require reconciliation.
 
 ## Confirmed unknown products
 
-Call `grocy_stock_manager.confirm_product` only after a person has reviewed the
-barcode and product name. Supply exactly one default location. The quantity unit
-defaults to the exact Grocy unit named `Pack`.
+Call `grocy_stock_manager.confirm_product` only when catalogue setup and stock
+change are intentionally separate. After a scanner review, prefer
+`grocy_stock_manager.confirm_product_transaction`; it creates or maps the
+barcode and then applies the exact captured operation with the same idempotent
+request ID. Supply a default location when a new product may be created. The
+quantity unit defaults to the exact Grocy unit named `Pack`.
 
 ```yaml
 action: grocy_stock_manager.confirm_product
@@ -210,8 +229,23 @@ response_variable: grocy_catalogue
 If the name exactly matches one existing product, the barcode is mapped to it;
 otherwise a new product is created. A retry first checks the barcode, so a lost
 response cannot silently create a duplicate. If the barcode already belongs to
-a differently named product, the action fails closed. This action never changes
-stock; call the verified `add` action afterwards with its own stable request ID.
+a differently named product, the action fails closed. The older
+`confirm_product` action never changes stock; the atomic variant performs the
+captured verified add or consume immediately after confirmation.
+
+## Activity, undo, and reconciliation
+
+Use the Status sensor's `last_transaction.request_id` with
+`grocy_stock_manager.undo_transaction` to compensate for one recent verified
+mistake. Undo uses the same product, amount, and shelf with the opposite
+operation, verifies the result, and cannot be applied twice. An undo transaction
+is not itself undoable.
+
+An `unknown` result is deliberately different: do not undo or retry it. Check
+the physical shelf and Grocy first, correct stock if necessary, then call
+`grocy_stock_manager.acknowledge_reconciliation` with the original request ID
+and a short note. Only that explicit action clears the Status sensor's
+`attention` latch.
 
 ## Guarded product merges
 

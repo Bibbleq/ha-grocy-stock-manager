@@ -72,6 +72,81 @@ confirm_product:
       selector:
         text:
 
+confirm_product_transaction:
+  name: Confirm product and apply captured stock action
+  description: >-
+    Atomically preserve the scanner's original add or consume intent while a
+    person identifies an unknown barcode. The product is created or mapped,
+    then that exact captured stock action is verified and journalled. A retry
+    with the same request ID cannot change stock twice.
+  fields:
+    barcode:
+      name: Barcode
+      description: Exact confirmed barcode. Leading zeroes are preserved.
+      required: true
+      selector:
+        text:
+    product_name:
+      name: Product name
+      description: Exact product name selected or entered by the person.
+      required: true
+      selector:
+        text:
+    operation:
+      name: Original operation
+      description: The add or consume action captured when the barcode was scanned.
+      required: true
+      selector:
+        select:
+          options:
+            - add
+            - consume
+    amount:
+      name: Amount
+      description: Positive quantity captured when the barcode was scanned.
+      default: 1
+      selector:
+        number:
+          min: 0.001
+          step: 1
+          mode: box
+    location_id:
+      name: Location ID
+      description: Optional exact Grocy location ID; do not also set a name.
+      selector:
+        number:
+          min: 1
+          mode: box
+    location_name:
+      name: Location name
+      description: Optional exact Grocy location name; do not also set an ID.
+      selector:
+        text:
+    quantity_unit_id:
+      name: Quantity unit ID
+      description: Optional exact Grocy quantity unit ID; do not also set a name.
+      selector:
+        number:
+          min: 1
+          mode: box
+    quantity_unit_name:
+      name: Quantity unit name
+      description: Optional exact Grocy quantity unit name. Defaults to Pack.
+      selector:
+        text:
+    request_id:
+      name: Request ID
+      description: Unique ID captured with the original scanner action.
+      required: true
+      selector:
+        text:
+    source:
+      name: Source
+      description: Short workflow origin such as garage_scanner.
+      default: garage_scanner
+      selector:
+        text:
+
 add:
   name: Add Grocy stock
   description: >-
@@ -142,6 +217,39 @@ consume:
     the resulting quantity. Expected safety rejections return outcome: rejected,
     stock_changed: false, and a machine-readable error_code.
   fields: *mutation_fields
+
+undo_transaction:
+  name: Undo verified stock transaction
+  description: >-
+    Apply one verified compensating transaction to a recent committed add or
+    consume. The same original transaction cannot be undone twice.
+  fields:
+    original_request_id:
+      name: Original request ID
+      description: Request ID of the committed transaction to undo.
+      required: true
+      selector:
+        text:
+
+acknowledge_reconciliation:
+  name: Acknowledge stock reconciliation
+  description: >-
+    Clear a transaction's reconciliation-required health latch after a person
+    has physically checked and corrected the relevant Grocy stock.
+  fields:
+    original_request_id:
+      name: Original request ID
+      description: Request ID of the unresolved transaction.
+      required: true
+      selector:
+        text:
+    note:
+      name: Reconciliation note
+      description: Short record of the physical check or correction performed.
+      required: true
+      selector:
+        text:
+          multiline: true
 
 resolve_product_phrase:
   name: Resolve spoken product phrase

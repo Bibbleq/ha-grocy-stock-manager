@@ -10,6 +10,7 @@ SERVICE_LOOKUP: Final = "lookup"
 SERVICE_ADD: Final = "add"
 SERVICE_CONSUME: Final = "consume"
 SERVICE_CONFIRM_PRODUCT: Final = "confirm_product"
+SERVICE_CONFIRM_PRODUCT_TRANSACTION: Final = "confirm_product_transaction"
 SERVICE_RESOLVE_PRODUCT_PHRASE: Final = "resolve_product_phrase"
 SERVICE_VOICE_TRANSACTION: Final = "voice_transaction"
 SERVICE_CONFIRM_VOICE_TRANSACTION: Final = "confirm_voice_transaction"
@@ -17,6 +18,8 @@ SERVICE_LEARN_PRODUCT_ALIAS: Final = "learn_product_alias"
 SERVICE_REMOVE_PRODUCT_ALIAS: Final = "remove_product_alias"
 SERVICE_LIST_PRODUCT_ALIASES: Final = "list_product_aliases"
 SERVICE_MERGE_PRODUCTS: Final = "merge_products"
+SERVICE_UNDO_TRANSACTION: Final = "undo_transaction"
+SERVICE_ACKNOWLEDGE_RECONCILIATION: Final = "acknowledge_reconciliation"
 
 ATTR_BARCODE: Final = "barcode"
 ATTR_PRODUCT_ID: Final = "product_id"
@@ -37,10 +40,14 @@ ATTR_PRODUCT_ID_TO_KEEP: Final = "product_id_to_keep"
 ATTR_PRODUCT_ID_TO_REMOVE: Final = "product_id_to_remove"
 ATTR_CANONICAL_NAME: Final = "canonical_name"
 ATTR_DRY_RUN: Final = "dry_run"
+ATTR_ORIGINAL_REQUEST_ID: Final = "original_request_id"
+ATTR_NOTE: Final = "note"
 
 STORAGE_VERSION: Final = 1
 STORAGE_KEY: Final = f"{DOMAIN}.transaction_journal"
 MAX_JOURNAL_RECORDS: Final = 256
 
 VOICE_ALIAS_USERFIELD: Final = "voice_aliases"
-VOICE_CONFIRMATION_TTL_SECONDS: Final = 60
+VOICE_CONFIRMATION_TTL_SECONDS: Final = 300
+VOICE_STORAGE_KEY: Final = f"{DOMAIN}.voice_confirmations"
+VOICE_STORAGE_VERSION: Final = 1

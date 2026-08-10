@@ -11,7 +11,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from difflib import SequenceMatcher
-from time import monotonic
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -23,6 +22,7 @@ from .api import (
 )
 from .const import VOICE_ALIAS_USERFIELD, VOICE_CONFIRMATION_TTL_SECONDS
 from .models import ProductLookupResult
+from .pending import PendingVoiceTransaction, VoiceConfirmationStore
 from .resolver import GrocyProductResolver
 from .transactions import GrocyTransactionManager
 
@@ -34,6 +34,11 @@ type ResolutionStatus = Literal[
 _NON_WORD = re.compile(r"[^a-z0-9]+")
 _PARENTHETICAL = re.compile(r"\([^)]*\)")
 _STOP_WORDS = frozenset({"a", "an", "and", "of", "the"})
+_SPOKEN_CONTAINER_PREFIX = re.compile(
+    r"^(?:(?:a|an|one|1)\s+)?"
+    r"(?:bottle|can|tin|jar|tube|tub|roll|box|bag|packet|pack)s?\s+"
+    r"(?:of\s+)?"
+)
 _MINIMUM_CANDIDATE_SCORE = 0.35
 _AMBIGUITY_MARGIN = 0.12
 
@@ -62,7 +67,8 @@ def normalise_product_phrase(value: str) -> str:
         for character in decomposed
         if not unicodedata.combining(character)
     )
-    return " ".join(_NON_WORD.sub(" ", ascii_value).split())
+    normalised = " ".join(_NON_WORD.sub(" ", ascii_value).split())
+    return _SPOKEN_CONTAINER_PREFIX.sub("", normalised).strip()
 
 
 def _tokens(value: str) -> frozenset[str]:
@@ -115,7 +121,7 @@ def _summary(payload: Mapping[str, Any]) -> tuple[int, str] | None:
     return product_id, name.strip()
 
 
-def _parse_alias_value(value: object) -> tuple[str, ...]:
+def parse_alias_value(value: object) -> tuple[str, ...]:
     """Decode aliases from human-readable text or the legacy JSON format."""
     if value in (None, ""):
         return ()
@@ -155,7 +161,7 @@ def _product_aliases(product: Mapping[str, Any]) -> tuple[str, ...]:
         return ()
     if not isinstance(fields, Mapping):
         raise GrocyInvalidResponseError
-    return _parse_alias_value(fields.get(VOICE_ALIAS_USERFIELD))
+    return parse_alias_value(fields.get(VOICE_ALIAS_USERFIELD))
 
 
 class GrocyVoiceAliases:
@@ -222,7 +228,7 @@ class GrocyVoiceAliases:
                 return False
 
             fields = await self._client.async_get_product_userfields(product_id)
-            aliases = set(_parse_alias_value(fields.get(VOICE_ALIAS_USERFIELD)))
+            aliases = set(parse_alias_value(fields.get(VOICE_ALIAS_USERFIELD)))
             aliases.add(normalised)
             value = _serialise_aliases(aliases)
             write_error: GrocyMutationOutcomeUnknownError | None = None
@@ -243,7 +249,7 @@ class GrocyVoiceAliases:
                 if write_error is not None:
                     raise write_error from err
                 raise GrocyMutationOutcomeUnknownError from err
-            if normalised not in _parse_alias_value(
+            if normalised not in parse_alias_value(
                 verified.get(VOICE_ALIAS_USERFIELD)
             ):
                 if write_error is not None:
@@ -265,7 +271,7 @@ class GrocyVoiceAliases:
                 raise VoiceAliasConflictError(normalised)
             product_id = next(iter(product_ids))
             fields = await self._client.async_get_product_userfields(product_id)
-            aliases = set(_parse_alias_value(fields.get(VOICE_ALIAS_USERFIELD)))
+            aliases = set(parse_alias_value(fields.get(VOICE_ALIAS_USERFIELD)))
             aliases.discard(normalised)
             value = _serialise_aliases(aliases)
             write_error: GrocyMutationOutcomeUnknownError | None = None
@@ -286,7 +292,7 @@ class GrocyVoiceAliases:
                 if write_error is not None:
                     raise write_error from err
                 raise GrocyMutationOutcomeUnknownError from err
-            if normalised in _parse_alias_value(verified.get(VOICE_ALIAS_USERFIELD)):
+            if normalised in parse_alias_value(verified.get(VOICE_ALIAS_USERFIELD)):
                 if write_error is not None:
                     raise write_error
                 raise GrocyMutationOutcomeUnknownError
@@ -504,21 +510,6 @@ class GrocyVoiceResolver:
         return VoiceResolution(status, phrase, normalised, operation, candidates)
 
 
-@dataclass(frozen=True, slots=True)
-class PendingVoiceTransaction:
-    """Short-lived transaction state; expiry can only prevent a write."""
-
-    created_at: float
-    operation: VoiceOperation
-    product_phrase: str
-    amount: Decimal
-    request_id: str
-    location_id: int | None
-    location_name: str | None
-    source: str
-    candidate_ids: frozenset[int]
-
-
 class GrocyVoiceManager:
     """Orchestrate resolution, guarded writes, and explicit confirmations."""
 
@@ -528,13 +519,13 @@ class GrocyVoiceManager:
         product_resolver: GrocyProductResolver,
         transactions: GrocyTransactionManager,
         aliases: GrocyVoiceAliases,
+        pending: VoiceConfirmationStore,
     ) -> None:
         self._resolver = resolver
         self._product_resolver = product_resolver
         self._transactions = transactions
         self._aliases = aliases
-        self._pending: dict[str, PendingVoiceTransaction] = {}
-        self._pending_lock = asyncio.Lock()
+        self._pending = pending
 
     async def async_process(
         self,
@@ -577,7 +568,7 @@ class GrocyVoiceManager:
         if resolution.candidates:
             token = uuid4().hex
             pending = PendingVoiceTransaction(
-                created_at=monotonic(),
+                created_at=self._pending.now_timestamp(),
                 operation=operation,
                 product_phrase=product_phrase.strip(),
                 amount=amount,
@@ -589,9 +580,7 @@ class GrocyVoiceManager:
                     candidate.lookup.product.id for candidate in resolution.candidates
                 ),
             )
-            async with self._pending_lock:
-                self._purge_expired()
-                self._pending[token] = pending
+            await self._pending.async_put(token, pending)
             response["confirmation_token"] = token
             response["confirmation_expires_in"] = VOICE_CONFIRMATION_TTL_SECONDS
         return response
@@ -604,14 +593,11 @@ class GrocyVoiceManager:
         learn_alias: bool,
     ) -> dict[str, Any]:
         """Confirm one offered product, optionally learn it, then transact."""
-        async with self._pending_lock:
-            self._purge_expired()
-            pending = self._pending.get(confirmation_token)
-            if pending is None:
-                raise VoiceConfirmationNotFoundError
-            if product_id not in pending.candidate_ids:
-                raise VoiceCandidateNotAllowedError
-            self._pending.pop(confirmation_token)
+        pending = await self._pending.async_take(confirmation_token, product_id)
+        if pending is None:
+            raise VoiceConfirmationNotFoundError
+        if product_id not in pending.candidate_ids:
+            raise VoiceCandidateNotAllowedError
 
         lookup = await self._product_resolver.async_lookup_by_product_id(product_id)
         alias_learned = False
@@ -640,13 +626,3 @@ class GrocyVoiceManager:
             "alias_learned": alias_learned,
             "transaction": transaction,
         }
-
-    def _purge_expired(self) -> None:
-        cutoff = monotonic() - VOICE_CONFIRMATION_TTL_SECONDS
-        expired = [
-            token
-            for token, pending in self._pending.items()
-            if pending.created_at < cutoff
-        ]
-        for token in expired:
-            self._pending.pop(token, None)

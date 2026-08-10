@@ -19,7 +19,7 @@ from .journal import TransactionJournal
 from .models import ProductLookupResult
 from .resolver import GrocyProductResolver
 from .transactions import GrocyTransactionManager, TransactionRequestConflictError
-from .voice import GrocyVoiceAliases, _parse_alias_value, _serialise_aliases
+from .voice import GrocyVoiceAliases, _serialise_aliases, parse_alias_value
 
 
 class MergeValidationError(Exception):
@@ -133,10 +133,10 @@ class GrocyProductMergeManager:
             product_id_to_remove
         )
         target_aliases = set(
-            _parse_alias_value(target_fields.get(VOICE_ALIAS_USERFIELD))
+            parse_alias_value(target_fields.get(VOICE_ALIAS_USERFIELD))
         )
         source_aliases = set(
-            _parse_alias_value(source_fields.get(VOICE_ALIAS_USERFIELD))
+            parse_alias_value(source_fields.get(VOICE_ALIAS_USERFIELD))
         )
         merged_aliases = target_aliases | source_aliases
 
@@ -317,7 +317,7 @@ class GrocyProductMergeManager:
         except GrocyMutationOutcomeUnknownError as err:
             write_error = err
         fields = await self._client.async_get_product_userfields(product_id)
-        if set(_parse_alias_value(fields.get(VOICE_ALIAS_USERFIELD))) != aliases:
+        if set(parse_alias_value(fields.get(VOICE_ALIAS_USERFIELD))) != aliases:
             if write_error is not None:
                 raise write_error
             raise GrocyMutationOutcomeUnknownError
@@ -380,7 +380,7 @@ class GrocyProductMergeManager:
             "stock_locations": actual_locations,
             "barcodes": sorted(item.barcode for item in lookup.product.barcodes),
             "voice_aliases": sorted(
-                _parse_alias_value(fields.get(VOICE_ALIAS_USERFIELD))
+                parse_alias_value(fields.get(VOICE_ALIAS_USERFIELD))
             ),
         }
         checks = {

@@ -27,6 +27,26 @@ from custom_components.grocy_stock_manager.voice import (
 )
 
 
+class FakePendingStore:
+    """Exercise voice manager token semantics without HA storage fixtures."""
+
+    def __init__(self) -> None:
+        self.records = {}
+
+    @staticmethod
+    def now_timestamp() -> float:
+        return 1_800_000_000.0
+
+    async def async_put(self, token, pending) -> None:
+        self.records[token] = pending
+
+    async def async_take(self, token, product_id):
+        pending = self.records.get(token)
+        if pending is None or product_id not in pending.candidate_ids:
+            return pending
+        return self.records.pop(token)
+
+
 def _product(
     product_id: int,
     name: str,
@@ -68,6 +88,13 @@ def _lookup(
 def test_normalise_product_phrase_handles_speech_punctuation() -> None:
     """Speech variants have one stable comparison form."""
     assert normalise_product_phrase("  Got2B's—Hair GEL! ") == "got2b s hair gel"
+
+
+def test_normalise_product_phrase_strips_singular_container_words() -> None:
+    """Natural voice phrasing resolves to the canonical product phrase."""
+    assert normalise_product_phrase("a bottle of sherry") == "sherry"
+    assert normalise_product_phrase("one can of Diet Coke") == "diet coke"
+    assert normalise_product_phrase("2 bottles of sherry") == "2 bottles of sherry"
 
 
 async def test_learn_alias_merges_and_verifies_in_grocy() -> None:
@@ -223,6 +250,7 @@ async def test_similar_product_requires_confirmation_before_stock_write() -> Non
         product_resolver,
         transactions,
         GrocyVoiceAliases(client),
+        FakePendingStore(),
     )
 
     response = await manager.async_process(
@@ -262,6 +290,7 @@ async def test_confirmation_rejects_unoffered_product_without_using_token() -> N
         product_resolver,
         transactions,
         GrocyVoiceAliases(client),
+        FakePendingStore(),
     )
     staged = await manager.async_process(
         operation="consume",

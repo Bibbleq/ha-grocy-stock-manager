@@ -4,6 +4,9 @@
     "sensor": {
       "inventory": {
         "name": "Inventory"
+      },
+      "status": {
+        "name": "Status"
       }
     }
   },

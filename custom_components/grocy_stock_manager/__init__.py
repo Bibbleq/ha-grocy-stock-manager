@@ -22,6 +22,7 @@ from .coordinator import GrocyInventoryCoordinator
 from .inventory import GrocyInventory
 from .journal import TransactionJournal
 from .merges import GrocyProductMergeManager
+from .pending import VoiceConfirmationStore
 from .resolver import GrocyProductResolver
 from .services import async_setup_services, async_unload_services
 from .transactions import GrocyTransactionManager
@@ -39,11 +40,13 @@ class GrocyStockManagerRuntimeData:
     client: GrocyApiClient
     resolver: GrocyProductResolver
     transactions: GrocyTransactionManager
+    journal: TransactionJournal
     catalogue: GrocyCatalogueManager
     voice_aliases: GrocyVoiceAliases
     voice_resolver: GrocyVoiceResolver
     voice: GrocyVoiceManager
     merges: GrocyProductMergeManager
+    pending_voice: VoiceConfirmationStore
     coordinator: GrocyInventoryCoordinator
     system_info: dict[str, Any]
 
@@ -78,6 +81,8 @@ async def async_setup_entry(
     resolver = GrocyProductResolver(client)
     journal = TransactionJournal(hass)
     await journal.async_load()
+    pending_voice = VoiceConfirmationStore(hass)
+    await pending_voice.async_load()
     voice_aliases = GrocyVoiceAliases(client)
     transactions = GrocyTransactionManager(client, resolver, journal)
     voice_resolver = GrocyVoiceResolver(client, resolver, voice_aliases)
@@ -87,6 +92,7 @@ async def async_setup_entry(
         client=client,
         resolver=resolver,
         transactions=transactions,
+        journal=journal,
         catalogue=GrocyCatalogueManager(client, resolver),
         voice_aliases=voice_aliases,
         voice_resolver=voice_resolver,
@@ -95,6 +101,7 @@ async def async_setup_entry(
             resolver,
             transactions,
             voice_aliases,
+            pending_voice,
         ),
         merges=GrocyProductMergeManager(
             client,
@@ -104,6 +111,7 @@ async def async_setup_entry(
             journal,
         ),
         coordinator=coordinator,
+        pending_voice=pending_voice,
         system_info=dict(system_info),
     )
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

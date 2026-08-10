@@ -255,6 +255,15 @@ class GrocyApiClient:
             raise GrocyInvalidResponseError
         return payload
 
+    async def async_get_product_barcodes(self) -> list[Mapping[str, Any]]:
+        """Return every configured product barcode in one bounded request."""
+        payload = await self._async_get_json("objects/product_barcodes")
+        if not isinstance(payload, list) or not all(
+            isinstance(item, dict) for item in payload
+        ):
+            raise GrocyInvalidResponseError
+        return payload
+
     async def async_get_product_userfields(
         self, product_id: int
     ) -> Mapping[str, Any]:
