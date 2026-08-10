@@ -32,12 +32,14 @@ from .catalogue import (
     CatalogueQuantityUnitNotFoundError,
 )
 from .const import (
+    ATTR_AGENT_ID,
     ATTR_AMOUNT,
     ATTR_BARCODE,
     ATTR_CANDIDATE_LIMIT,
     ATTR_CANONICAL_NAME,
     ATTR_CONFIRMATION_TOKEN,
     ATTR_DRY_RUN,
+    ATTR_JOB_ID,
     ATTR_LEARN_ALIAS,
     ATTR_LOCATION_ID,
     ATTR_LOCATION_NAME,
@@ -53,9 +55,11 @@ from .const import (
     ATTR_QUANTITY_UNIT_NAME,
     ATTR_REQUEST_ID,
     ATTR_SOURCE,
+    DEFAULT_IDENTIFICATION_AGENT,
     DOMAIN,
     SERVICE_ACKNOWLEDGE_RECONCILIATION,
     SERVICE_ADD,
+    SERVICE_COMPLETE_PRODUCT_IDENTIFICATION,
     SERVICE_CONFIRM_PRODUCT,
     SERVICE_CONFIRM_PRODUCT_TRANSACTION,
     SERVICE_CONFIRM_VOICE_TRANSACTION,
@@ -64,11 +68,15 @@ from .const import (
     SERVICE_LIST_PRODUCT_ALIASES,
     SERVICE_LOOKUP,
     SERVICE_MERGE_PRODUCTS,
+    SERVICE_OVERRIDE_PRODUCT_IDENTIFICATION,
+    SERVICE_REJECT_PRODUCT_IDENTIFICATION,
     SERVICE_REMOVE_PRODUCT_ALIAS,
     SERVICE_RESOLVE_PRODUCT_PHRASE,
+    SERVICE_START_PRODUCT_IDENTIFICATION,
     SERVICE_UNDO_TRANSACTION,
     SERVICE_VOICE_TRANSACTION,
 )
+from .identification import IdentificationRequestConflictError
 from .journal import is_undoable_result
 from .merges import (
     MergeAliasConflictError,
@@ -357,6 +365,63 @@ ACKNOWLEDGE_RECONCILIATION_SCHEMA = vol.Schema(
             _non_empty_string, vol.Length(max=128)
         ),
         vol.Required(ATTR_NOTE): vol.All(_non_empty_string, vol.Length(max=255)),
+    }
+)
+
+
+START_PRODUCT_IDENTIFICATION_SCHEMA = vol.All(
+    vol.Schema(
+        {
+            vol.Required(ATTR_BARCODE): vol.All(
+                _non_empty_string, vol.Length(max=128)
+            ),
+            vol.Required(ATTR_OPERATION): vol.In(("add", "consume")),
+            vol.Required(ATTR_AMOUNT, default=Decimal("1")): _positive_decimal,
+            vol.Optional(ATTR_LOCATION_ID): vol.All(
+                vol.Coerce(int), vol.Range(min=1)
+            ),
+            vol.Optional(ATTR_LOCATION_NAME): vol.All(
+                _non_empty_string, vol.Length(max=255)
+            ),
+            vol.Optional(ATTR_QUANTITY_UNIT_ID): vol.All(
+                vol.Coerce(int), vol.Range(min=1)
+            ),
+            vol.Optional(ATTR_QUANTITY_UNIT_NAME): vol.All(
+                _non_empty_string, vol.Length(max=255)
+            ),
+            vol.Required(ATTR_REQUEST_ID): vol.All(
+                _non_empty_string, vol.Length(max=128)
+            ),
+            vol.Optional(ATTR_SOURCE, default="garage_scanner"): vol.All(
+                _non_empty_string, vol.Length(max=64)
+            ),
+            vol.Optional(
+                ATTR_AGENT_ID, default=DEFAULT_IDENTIFICATION_AGENT
+            ): vol.All(_non_empty_string, vol.Length(max=255)),
+        }
+    ),
+    _at_most_one_location,
+    _at_most_one_quantity_unit,
+)
+
+
+IDENTIFICATION_JOB_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_JOB_ID): vol.All(
+            _non_empty_string, vol.Length(max=64)
+        )
+    }
+)
+
+
+COMPLETE_PRODUCT_IDENTIFICATION_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_JOB_ID): vol.All(
+            _non_empty_string, vol.Length(max=64)
+        ),
+        vol.Required(ATTR_PRODUCT_NAME): vol.All(
+            _non_empty_string, vol.Length(max=255)
+        ),
     }
 )
 
@@ -1222,6 +1287,97 @@ async def _async_list_product_aliases(
     }
 
 
+async def _async_start_product_identification(
+    entry: GrocyStockManagerConfigEntry,
+    call: ServiceCall,
+) -> ServiceResponse:
+    """Persist an unknown scan and start slow AI work in the background."""
+    try:
+        return await entry.runtime_data.identification.async_start(
+            barcode=call.data[ATTR_BARCODE],
+            operation=call.data[ATTR_OPERATION],
+            amount=call.data[ATTR_AMOUNT],
+            request_id=call.data[ATTR_REQUEST_ID],
+            location_id=call.data.get(ATTR_LOCATION_ID),
+            location_name=call.data.get(ATTR_LOCATION_NAME),
+            quantity_unit_id=call.data.get(ATTR_QUANTITY_UNIT_ID),
+            quantity_unit_name=(
+                call.data.get(ATTR_QUANTITY_UNIT_NAME)
+                or (
+                    "Pack"
+                    if call.data.get(ATTR_QUANTITY_UNIT_ID) is None
+                    else None
+                )
+            ),
+            source=call.data[ATTR_SOURCE],
+            agent_id=call.data[ATTR_AGENT_ID],
+        )
+    except RuntimeError as err:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="identification_queue_full",
+        ) from err
+    except IdentificationRequestConflictError as err:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="identification_request_conflict",
+        ) from err
+
+
+def _identification_response(
+    job: Any | None,
+    *,
+    action: str,
+) -> ServiceResponse:
+    if job is None:
+        return {
+            "response_version": 1,
+            "success": False,
+            "status": "not_found",
+            "action": action,
+        }
+    return {
+        "response_version": 1,
+        "success": True,
+        "status": job.status,
+        "action": action,
+        "job": job.as_public_dict(),
+    }
+
+
+async def _async_override_product_identification(
+    entry: GrocyStockManagerConfigEntry,
+    call: ServiceCall,
+) -> ServiceResponse:
+    """Let the tablet replace a slow AI lookup with immediate manual entry."""
+    job = await entry.runtime_data.identification.async_override(
+        call.data[ATTR_JOB_ID]
+    )
+    return _identification_response(job, action="override")
+
+
+async def _async_complete_product_identification(
+    entry: GrocyStockManagerConfigEntry,
+    call: ServiceCall,
+) -> ServiceResponse:
+    """Close durable work after the captured stock transaction committed."""
+    job = await entry.runtime_data.identification.async_complete(
+        call.data[ATTR_JOB_ID], call.data[ATTR_PRODUCT_NAME]
+    )
+    return _identification_response(job, action="complete")
+
+
+async def _async_reject_product_identification(
+    entry: GrocyStockManagerConfigEntry,
+    call: ServiceCall,
+) -> ServiceResponse:
+    """Reject one queued identity explicitly without changing stock."""
+    job = await entry.runtime_data.identification.async_reject(
+        call.data[ATTR_JOB_ID]
+    )
+    return _identification_response(job, action="reject")
+
+
 async def _async_merge_products(
     entry: GrocyStockManagerConfigEntry,
     call: ServiceCall,
@@ -1347,6 +1503,26 @@ def async_setup_services(
     ) -> ServiceResponse:
         return await _async_acknowledge_reconciliation(entry, call)
 
+    async def async_start_product_identification(
+        call: ServiceCall,
+    ) -> ServiceResponse:
+        return await _async_start_product_identification(entry, call)
+
+    async def async_override_product_identification(
+        call: ServiceCall,
+    ) -> ServiceResponse:
+        return await _async_override_product_identification(entry, call)
+
+    async def async_complete_product_identification(
+        call: ServiceCall,
+    ) -> ServiceResponse:
+        return await _async_complete_product_identification(entry, call)
+
+    async def async_reject_product_identification(
+        call: ServiceCall,
+    ) -> ServiceResponse:
+        return await _async_reject_product_identification(entry, call)
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_LOOKUP,
@@ -1445,6 +1621,34 @@ def async_setup_services(
         schema=ACKNOWLEDGE_RECONCILIATION_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_START_PRODUCT_IDENTIFICATION,
+        async_start_product_identification,
+        schema=START_PRODUCT_IDENTIFICATION_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_OVERRIDE_PRODUCT_IDENTIFICATION,
+        async_override_product_identification,
+        schema=IDENTIFICATION_JOB_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_COMPLETE_PRODUCT_IDENTIFICATION,
+        async_complete_product_identification,
+        schema=COMPLETE_PRODUCT_IDENTIFICATION_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_REJECT_PRODUCT_IDENTIFICATION,
+        async_reject_product_identification,
+        schema=IDENTIFICATION_JOB_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
 
 
 @callback
@@ -1464,3 +1668,7 @@ def async_unload_services(hass: HomeAssistant) -> None:
     hass.services.async_remove(DOMAIN, SERVICE_MERGE_PRODUCTS)
     hass.services.async_remove(DOMAIN, SERVICE_UNDO_TRANSACTION)
     hass.services.async_remove(DOMAIN, SERVICE_ACKNOWLEDGE_RECONCILIATION)
+    hass.services.async_remove(DOMAIN, SERVICE_START_PRODUCT_IDENTIFICATION)
+    hass.services.async_remove(DOMAIN, SERVICE_OVERRIDE_PRODUCT_IDENTIFICATION)
+    hass.services.async_remove(DOMAIN, SERVICE_COMPLETE_PRODUCT_IDENTIFICATION)
+    hass.services.async_remove(DOMAIN, SERVICE_REJECT_PRODUCT_IDENTIFICATION)

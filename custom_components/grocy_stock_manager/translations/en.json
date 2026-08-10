@@ -108,6 +108,12 @@
     },
     "merge_outcome_unknown": {
       "message": "Grocy may have merged the products, but the full result could not be verified. Do not retry with a new request ID until the target product, source product, stock, barcodes, and voice aliases have been reconciled."
+    },
+    "identification_queue_full": {
+      "message": "The durable product-identification queue is full. Resolve an existing pending item before scanning another unknown product. No stock was changed."
+    },
+    "identification_request_conflict": {
+      "message": "That identification request ID was already used for different scanner work. No stock was changed."
     }
   }
 }

@@ -122,6 +122,9 @@ class GrocyStockManagerStatusSensor(
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return bounded activity and pending-confirmation diagnostics."""
         all_activity = self._entry.runtime_data.journal.snapshot(limit=256)
+        pending_identifications = (
+            self._entry.runtime_data.pending_identifications.pending_snapshot()
+        )
         reconciliation = [
             _compact_activity(item)
             for item in all_activity
@@ -145,4 +148,8 @@ class GrocyStockManagerStatusSensor(
             "pending_voice_confirmations": (
                 self._entry.runtime_data.pending_voice.snapshot()
             ),
+            "pending_product_identifications": (
+                pending_identifications
+            ),
+            "pending_product_identification_count": len(pending_identifications),
         }

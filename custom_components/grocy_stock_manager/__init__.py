@@ -19,6 +19,10 @@ from .api import (
 )
 from .catalogue import GrocyCatalogueManager
 from .coordinator import GrocyInventoryCoordinator
+from .identification import (
+    ProductIdentificationManager,
+    ProductIdentificationStore,
+)
 from .inventory import GrocyInventory
 from .journal import TransactionJournal
 from .merges import GrocyProductMergeManager
@@ -47,6 +51,8 @@ class GrocyStockManagerRuntimeData:
     voice: GrocyVoiceManager
     merges: GrocyProductMergeManager
     pending_voice: VoiceConfirmationStore
+    pending_identifications: ProductIdentificationStore
+    identification: ProductIdentificationManager
     coordinator: GrocyInventoryCoordinator
     system_info: dict[str, Any]
 
@@ -83,12 +89,17 @@ async def async_setup_entry(
     await journal.async_load()
     pending_voice = VoiceConfirmationStore(hass)
     await pending_voice.async_load()
+    pending_identifications = ProductIdentificationStore(hass)
+    await pending_identifications.async_load()
+    identification = ProductIdentificationManager(
+        hass, entry, pending_identifications
+    )
     voice_aliases = GrocyVoiceAliases(client)
     transactions = GrocyTransactionManager(client, resolver, journal)
     voice_resolver = GrocyVoiceResolver(client, resolver, voice_aliases)
     coordinator = GrocyInventoryCoordinator(hass, entry, GrocyInventory(client))
     await coordinator.async_config_entry_first_refresh()
-    entry.runtime_data = GrocyStockManagerRuntimeData(
+    runtime_data = GrocyStockManagerRuntimeData(
         client=client,
         resolver=resolver,
         transactions=transactions,
@@ -112,8 +123,12 @@ async def async_setup_entry(
         ),
         coordinator=coordinator,
         pending_voice=pending_voice,
+        pending_identifications=pending_identifications,
+        identification=identification,
         system_info=dict(system_info),
     )
+    entry.runtime_data = runtime_data
+    runtime_data.identification.async_resume()
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     async_setup_services(hass, entry)
     return True
