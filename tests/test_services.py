@@ -2,7 +2,7 @@
 
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from homeassistant.const import CONF_API_KEY, CONF_URL, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
@@ -14,6 +14,7 @@ from custom_components.grocy_stock_manager.const import (
     ATTR_LOCATION_ID,
     ATTR_OPERATION,
     ATTR_ORIGINAL_REQUEST_ID,
+    ATTR_PRODUCT_ALIASES,
     ATTR_PRODUCT_ID,
     ATTR_PRODUCT_NAME,
     ATTR_REQUEST_ID,
@@ -22,6 +23,7 @@ from custom_components.grocy_stock_manager.const import (
     SERVICE_ACKNOWLEDGE_RECONCILIATION,
     SERVICE_COMPLETE_PRODUCT_IDENTIFICATION,
     SERVICE_CONFIRM_PRODUCT,
+    SERVICE_CONFIRM_PRODUCT_IDENTIFICATION,
     SERVICE_CONFIRM_PRODUCT_TRANSACTION,
     SERVICE_CONFIRM_VOICE_TRANSACTION,
     SERVICE_LEARN_PRODUCT_ALIAS,
@@ -47,6 +49,7 @@ from custom_components.grocy_stock_manager.models import (
 )
 from custom_components.grocy_stock_manager.resolver import GrocyProductResolver
 from custom_components.grocy_stock_manager.services import (
+    _async_confirm_product_identification,
     _async_confirm_product_transaction,
     _async_mutate,
     _async_undo_transaction,
@@ -168,6 +171,9 @@ async def test_lookup_action_returns_data_and_unloads(hass: HomeAssistant) -> No
         assert hass.services.has_service(DOMAIN, SERVICE_ACKNOWLEDGE_RECONCILIATION)
         assert hass.services.has_service(DOMAIN, SERVICE_START_PRODUCT_IDENTIFICATION)
         assert hass.services.has_service(
+            DOMAIN, SERVICE_CONFIRM_PRODUCT_IDENTIFICATION
+        )
+        assert hass.services.has_service(
             DOMAIN, SERVICE_OVERRIDE_PRODUCT_IDENTIFICATION
         )
         assert hass.services.has_service(
@@ -204,6 +210,9 @@ async def test_lookup_action_returns_data_and_unloads(hass: HomeAssistant) -> No
     assert not hass.services.has_service(DOMAIN, SERVICE_UNDO_TRANSACTION)
     assert not hass.services.has_service(DOMAIN, SERVICE_ACKNOWLEDGE_RECONCILIATION)
     assert not hass.services.has_service(DOMAIN, SERVICE_START_PRODUCT_IDENTIFICATION)
+    assert not hass.services.has_service(
+        DOMAIN, SERVICE_CONFIRM_PRODUCT_IDENTIFICATION
+    )
     assert not hass.services.has_service(
         DOMAIN, SERVICE_OVERRIDE_PRODUCT_IDENTIFICATION
     )
@@ -266,6 +275,71 @@ async def test_confirm_product_transaction_preserves_original_consume_intent() -
         location_name=None,
         source="garage_scanner",
     )
+
+
+async def test_queued_confirmation_uses_only_the_jobs_immutable_intent() -> None:
+    """The new action cannot replace the operation, amount, shelf, or request ID."""
+    job = SimpleNamespace(
+        job_id="job-1",
+        status="ready",
+        barcode="12345670",
+        operation="consume",
+        amount=Decimal("2"),
+        request_id="garage:scanner:42:identify",
+        confirmation_request_id="garage:scanner:42:confirm",
+        source="garage_scanner",
+        location_id=12,
+        location_name=None,
+        quantity_unit_id=None,
+        quantity_unit_name="Pack",
+        confirmed_product_name="Desk test item",
+        as_public_dict=lambda: {"job_id": "job-1", "status": "ready"},
+    )
+    manager = SimpleNamespace(
+        get=Mock(return_value=job),
+        async_recover_job=AsyncMock(return_value=None),
+        async_begin_confirmation=AsyncMock(return_value=job),
+        async_mark_committed=AsyncMock(
+            return_value={"success": True, "status": "committed"}
+        ),
+        queue_summary=Mock(return_value={"pending_count": 1}),
+    )
+    entry = SimpleNamespace(runtime_data=SimpleNamespace(identification=manager))
+    call = SimpleNamespace(
+        hass=SimpleNamespace(),
+        data={
+            "job_id": "job-1",
+            ATTR_PRODUCT_NAME: "Desk test item",
+            ATTR_PRODUCT_ALIASES: ("desk item",),
+        },
+    )
+    transaction = {
+        "outcome": "committed",
+        "product_id": 1,
+        "product_name": "Desk test item",
+        "replayed": False,
+    }
+
+    with patch(
+        "custom_components.grocy_stock_manager.services."
+        "_async_confirm_product_transaction",
+        AsyncMock(
+            return_value={
+                "status": "committed",
+                "stock_changed": True,
+                "catalogue": {"product_id": 1},
+                "transaction": transaction,
+            }
+        ),
+    ) as confirm:
+        response = await _async_confirm_product_identification(entry, call)
+
+    assert response["success"] is True
+    immutable = confirm.await_args.args[1].data
+    assert immutable[ATTR_OPERATION] == "consume"
+    assert immutable[ATTR_AMOUNT] == Decimal("2")
+    assert immutable[ATTR_LOCATION_ID] == 12
+    assert immutable[ATTR_REQUEST_ID] == "garage:scanner:42:confirm"
 
 
 async def test_undo_transaction_applies_exact_opposite_once() -> None:

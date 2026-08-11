@@ -152,4 +152,7 @@ class GrocyStockManagerStatusSensor(
                 pending_identifications
             ),
             "pending_product_identification_count": len(pending_identifications),
+            "next_product_identification": (
+                pending_identifications[0] if pending_identifications else None
+            ),
         }

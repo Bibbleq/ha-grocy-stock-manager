@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 from hashlib import sha256
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
@@ -46,6 +47,7 @@ from .const import (
     ATTR_NOTE,
     ATTR_OPERATION,
     ATTR_ORIGINAL_REQUEST_ID,
+    ATTR_PRODUCT_ALIASES,
     ATTR_PRODUCT_ID,
     ATTR_PRODUCT_ID_TO_KEEP,
     ATTR_PRODUCT_ID_TO_REMOVE,
@@ -61,6 +63,7 @@ from .const import (
     SERVICE_ADD,
     SERVICE_COMPLETE_PRODUCT_IDENTIFICATION,
     SERVICE_CONFIRM_PRODUCT,
+    SERVICE_CONFIRM_PRODUCT_IDENTIFICATION,
     SERVICE_CONFIRM_PRODUCT_TRANSACTION,
     SERVICE_CONFIRM_VOICE_TRANSACTION,
     SERVICE_CONSUME,
@@ -147,6 +150,30 @@ def _positive_decimal(value: Any) -> Decimal:
     if not amount.is_finite() or amount <= 0:
         raise vol.Invalid("amount must be a finite number greater than zero")
     return amount
+
+
+def _product_aliases(value: Any) -> tuple[str, ...]:
+    """Accept a UI list or comma/newline-delimited aliases and deduplicate it."""
+    if value in (None, ""):
+        return ()
+    raw = value.replace("\n", ",").split(",") if isinstance(value, str) else value
+    if not isinstance(raw, (list, tuple)):
+        raise vol.Invalid("product_aliases must be a list or delimited string")
+    aliases: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str):
+            raise vol.Invalid("every product alias must be text")
+        alias = item.strip()
+        if not alias:
+            continue
+        if len(alias) > 255:
+            raise vol.Invalid("product aliases must be at most 255 characters")
+        normalised = normalise_product_phrase(alias)
+        if normalised and normalised not in seen:
+            aliases.append(alias)
+            seen.add(normalised)
+    return tuple(aliases)
 
 
 def _at_most_one_location(data: dict[str, Any]) -> dict[str, Any]:
@@ -410,6 +437,19 @@ IDENTIFICATION_JOB_SCHEMA = vol.Schema(
         vol.Required(ATTR_JOB_ID): vol.All(
             _non_empty_string, vol.Length(max=64)
         )
+    }
+)
+
+
+CONFIRM_PRODUCT_IDENTIFICATION_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_JOB_ID): vol.All(
+            _non_empty_string, vol.Length(max=128)
+        ),
+        vol.Required(ATTR_PRODUCT_NAME): vol.All(
+            _non_empty_string, vol.Length(max=255)
+        ),
+        vol.Optional(ATTR_PRODUCT_ALIASES, default=()): _product_aliases,
     }
 )
 
@@ -1324,6 +1364,164 @@ async def _async_start_product_identification(
         ) from err
 
 
+async def _async_confirm_product_identification(
+    entry: GrocyStockManagerConfigEntry,
+    call: ServiceCall,
+) -> ServiceResponse:
+    """Confirm one queued identity and its immutable captured transaction."""
+    manager = entry.runtime_data.identification
+    job_id = call.data[ATTR_JOB_ID]
+    product_name = call.data[ATTR_PRODUCT_NAME]
+    aliases = call.data[ATTR_PRODUCT_ALIASES]
+    current = manager.get(job_id)
+    if current is None:
+        return {
+            "response_version": 1,
+            "success": False,
+            "status": "not_found",
+            "stock_changed": False,
+            "queue": manager.queue_summary(),
+        }
+
+    recovered = await manager.async_recover_job(job_id)
+    if recovered is not None:
+        return recovered
+    if current.status == "rejected":
+        return {
+            "response_version": 1,
+            "success": False,
+            "status": "rejected",
+            "stock_changed": False,
+            "job": current.as_public_dict(),
+            "queue": manager.queue_summary(job_id),
+        }
+    if current.status == "completed":
+        return {
+            "response_version": 1,
+            "success": True,
+            "status": "committed",
+            "stock_changed": True,
+            "replayed": True,
+            "job": current.as_public_dict(),
+            "queue": manager.queue_summary(job_id),
+            "warnings": ["The completed transaction is no longer in the journal."],
+        }
+
+    begun = await manager.async_begin_confirmation(
+        job_id,
+        product_name,
+        aliases,
+    )
+    if begun is None:
+        return {
+            "response_version": 1,
+            "success": False,
+            "status": "not_found",
+            "stock_changed": False,
+            "queue": manager.queue_summary(),
+        }
+    if (
+        begun.confirmed_product_name is not None
+        and begun.confirmed_product_name.casefold() != product_name.casefold()
+    ):
+        return {
+            "response_version": 1,
+            "success": False,
+            "status": "rejected",
+            "stock_changed": False,
+            "error_code": "confirmation_already_in_progress",
+            "message": "This queue item is already confirming a different name.",
+            "job": begun.as_public_dict(),
+            "queue": manager.queue_summary(job_id),
+        }
+
+    confirmation_call = SimpleNamespace(
+        hass=call.hass,
+        data={
+            ATTR_BARCODE: begun.barcode,
+            ATTR_PRODUCT_NAME: begun.confirmed_product_name or product_name,
+            ATTR_OPERATION: begun.operation,
+            ATTR_AMOUNT: begun.amount,
+            ATTR_REQUEST_ID: begun.confirmation_request_id,
+            ATTR_SOURCE: begun.source,
+            **(
+                {ATTR_LOCATION_ID: begun.location_id}
+                if begun.location_id is not None
+                else {}
+            ),
+            **(
+                {ATTR_LOCATION_NAME: begun.location_name}
+                if begun.location_name is not None
+                else {}
+            ),
+            **(
+                {ATTR_QUANTITY_UNIT_ID: begun.quantity_unit_id}
+                if begun.quantity_unit_id is not None
+                else {}
+            ),
+            **(
+                {ATTR_QUANTITY_UNIT_NAME: begun.quantity_unit_name}
+                if begun.quantity_unit_name is not None
+                else {}
+            ),
+        },
+    )
+    try:
+        confirmation = await _async_confirm_product_transaction(
+            entry, confirmation_call
+        )
+    except Exception:
+        await manager.async_return_for_review(
+            job_id,
+            error_code="confirmation_error_before_verified_commit",
+            message="Confirmation failed safely; retry this queue item",
+        )
+        raise
+
+    transaction = confirmation.get("transaction")
+    if (
+        confirmation.get("status") == "committed"
+        and isinstance(transaction, dict)
+        and transaction.get("outcome") == "committed"
+    ):
+        return await manager.async_mark_committed(
+            job_id,
+            str(transaction.get("product_name") or product_name),
+            transaction=transaction,
+            catalogue=confirmation.get("catalogue"),
+            replayed=bool(transaction.get("replayed")),
+        )
+    if confirmation.get("status") == "rejected":
+        returned = await manager.async_return_for_review(
+            job_id,
+            error_code=str(confirmation.get("error_code") or "transaction_rejected"),
+            message=str(
+                confirmation.get("message")
+                or "The captured transaction was rejected safely; review it"
+            ),
+        )
+        return {
+            **confirmation,
+            "job": returned.as_public_dict() if returned is not None else None,
+            "queue": manager.queue_summary(job_id),
+        }
+
+    failed = await manager.async_mark_failed(
+        job_id,
+        error_code="transaction_outcome_unknown",
+        message="The stock outcome could not be verified; reconcile before retrying",
+    )
+    return {
+        **confirmation,
+        "success": False,
+        "status": "failed",
+        "stock_changed": False,
+        "requires_reconciliation": True,
+        "job": failed.as_public_dict() if failed is not None else None,
+        "queue": manager.queue_summary(job_id),
+    }
+
+
 def _identification_response(
     job: Any | None,
     *,
@@ -1508,6 +1706,11 @@ def async_setup_services(
     ) -> ServiceResponse:
         return await _async_start_product_identification(entry, call)
 
+    async def async_confirm_product_identification(
+        call: ServiceCall,
+    ) -> ServiceResponse:
+        return await _async_confirm_product_identification(entry, call)
+
     async def async_override_product_identification(
         call: ServiceCall,
     ) -> ServiceResponse:
@@ -1630,6 +1833,13 @@ def async_setup_services(
     )
     hass.services.async_register(
         DOMAIN,
+        SERVICE_CONFIRM_PRODUCT_IDENTIFICATION,
+        async_confirm_product_identification,
+        schema=CONFIRM_PRODUCT_IDENTIFICATION_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
         SERVICE_OVERRIDE_PRODUCT_IDENTIFICATION,
         async_override_product_identification,
         schema=IDENTIFICATION_JOB_SCHEMA,
@@ -1669,6 +1879,7 @@ def async_unload_services(hass: HomeAssistant) -> None:
     hass.services.async_remove(DOMAIN, SERVICE_UNDO_TRANSACTION)
     hass.services.async_remove(DOMAIN, SERVICE_ACKNOWLEDGE_RECONCILIATION)
     hass.services.async_remove(DOMAIN, SERVICE_START_PRODUCT_IDENTIFICATION)
+    hass.services.async_remove(DOMAIN, SERVICE_CONFIRM_PRODUCT_IDENTIFICATION)
     hass.services.async_remove(DOMAIN, SERVICE_OVERRIDE_PRODUCT_IDENTIFICATION)
     hass.services.async_remove(DOMAIN, SERVICE_COMPLETE_PRODUCT_IDENTIFICATION)
     hass.services.async_remove(DOMAIN, SERVICE_REJECT_PRODUCT_IDENTIFICATION)

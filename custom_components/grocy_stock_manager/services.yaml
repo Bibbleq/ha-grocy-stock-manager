@@ -521,6 +521,31 @@ start_product_identification:
       selector:
         text:
 
+confirm_product_identification:
+  name: Confirm queued product identification
+  description: >-
+    Confirm one durable identification job. The integration uses the job's
+    immutable add/consume intent, performs one idempotent verified stock
+    transaction, completes the queue item before optional aliases are learned,
+    and returns metadata failures as warnings rather than transaction failures.
+  fields:
+    job_id:
+      name: Identification job ID
+      required: true
+      selector:
+        text:
+    product_name:
+      name: Confirmed product name
+      required: true
+      selector:
+        text:
+    product_aliases:
+      name: Voice aliases
+      description: Optional aliases to learn after the stock commit is complete.
+      selector:
+        text:
+          multiple: true
+
 override_product_identification:
   name: Override product identification now
   description: >-
