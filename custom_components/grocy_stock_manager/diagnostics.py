@@ -19,4 +19,7 @@ async def async_get_config_entry_diagnostics(
     return {
         "config_entry": async_redact_data(dict(entry.data), {CONF_API_KEY}),
         "system_info": entry.runtime_data.system_info,
+        "pending_product_identifications": (
+            entry.runtime_data.pending_identifications.pending_snapshot()
+        ),
     }

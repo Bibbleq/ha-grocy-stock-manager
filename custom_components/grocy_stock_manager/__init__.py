@@ -91,10 +91,14 @@ async def async_setup_entry(
     await pending_voice.async_load()
     pending_identifications = ProductIdentificationStore(hass)
     await pending_identifications.async_load()
-    identification = ProductIdentificationManager(
-        hass, entry, pending_identifications
-    )
     voice_aliases = GrocyVoiceAliases(client)
+    identification = ProductIdentificationManager(
+        hass,
+        entry,
+        pending_identifications,
+        journal,
+        voice_aliases,
+    )
     transactions = GrocyTransactionManager(client, resolver, journal)
     voice_resolver = GrocyVoiceResolver(client, resolver, voice_aliases)
     coordinator = GrocyInventoryCoordinator(hass, entry, GrocyInventory(client))

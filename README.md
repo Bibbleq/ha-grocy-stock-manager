@@ -64,6 +64,12 @@ The current build provides:
   reconciliation-required latch.
 - Durable unknown-product jobs which preserve the original barcode, operation,
   quantity, shelf and request ID before slow AI work begins.
+- An ordered multi-item review queue. Known-product scans can continue while
+  unknown products wait, and every queued item exposes its position and the
+  current queue length.
+- Queue-native `confirm_product_identification`, which performs the immutable
+  captured transaction, clears committed work before optional aliases are
+  learned, and recovers interrupted confirmations from the transaction journal.
 - Fire-and-forget AI identification through a configured Home Assistant
   conversation agent, with a 45-second timeout, restart recovery and a manual
   override that safely discards late results.
@@ -78,9 +84,9 @@ always checked first; only an unknown barcode enters the deterministic provider
 cascade. If those providers fail, `start_product_identification` durably stores
 the scanner intent and returns before AI starts. The Status sensor and
 `grocy_stock_manager_identification_updated` event expose searching, suggested,
-manual-required, completed and rejected states. A candidate must still be
-confirmed before `confirm_product_transaction` can create or map it and apply
-the immutable captured intent.
+manual-required, confirming, failed, completed and rejected states. A candidate
+must still be confirmed before `confirm_product_identification` can create or
+map it and apply the immutable captured intent.
 
 ## Voice product names
 
@@ -260,19 +266,42 @@ data:
 response_variable: identification
 ```
 
-Use the returned `job.job_id` in the tablet popup. Calling
-`override_product_identification` changes the durable job to `manual_required`
-immediately; any late AI response is ignored. After
-`confirm_product_transaction` returns a committed result, call
-`complete_product_identification` with that job ID and the confirmed product
-name. `reject_product_identification` records an explicit rejection without a
-stock write.
+Use the returned `job.job_id` in the tablet. The response also includes queue
+position/count data. Calling `override_product_identification` changes the
+durable job to `manual_required` immediately; any late AI response is ignored.
+Confirm the queue item directly:
+
+```yaml
+action: grocy_stock_manager.confirm_product_identification
+data:
+  job_id: "{{ identification.job.job_id }}"
+  product_name: Pip & Nut Crunchy Peanut Butter
+  product_aliases:
+    - peanut butter
+    - crunchy peanut butter
+response_variable: confirmation
+```
+
+The integration derives the stable transaction request ID from the job and
+uses only its captured operation, quantity and shelf. It marks a verified
+commit complete before learning aliases, so an alias failure is returned as a
+warning and cannot block the next review. Repeating the action replays journal
+evidence without changing stock twice. On restart, interrupted confirmations
+are recovered from the journal; an uncertain result stays visible as `failed`
+and requires reconciliation. `reject_product_identification` records an
+explicit rejection without a stock write.
+
+`confirm_product_transaction` and `complete_product_identification` remain for
+backwards compatibility, but new queue consumers should use the single action
+above.
 
 Every transition fires `grocy_stock_manager_identification_updated` with the
 public job under `event.data.job`. The Status sensor's
-`pending_product_identifications` attribute is the persistent dashboard
-fallback if a Browser Mod popup is hidden, the tablet is offline, or Home
-Assistant restarts mid-lookup.
+`pending_product_identifications` attribute is the ordered persistent queue;
+each item includes `queue_position`, `queue_count` and `is_queue_head`.
+`next_product_identification` provides the current queue head for simple
+dashboards. These remain authoritative if a popup is hidden, the tablet is
+offline, or Home Assistant restarts mid-lookup or confirmation.
 
 ## Activity, undo, and reconciliation
 

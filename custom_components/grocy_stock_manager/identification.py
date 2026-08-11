@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
+from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
@@ -26,14 +28,23 @@ from .const import (
 
 if TYPE_CHECKING:
     from . import GrocyStockManagerConfigEntry
+    from .journal import TransactionJournal
+    from .voice import GrocyVoiceAliases
 
 type IdentificationStatus = Literal[
-    "searching", "ready", "manual_required", "completed", "rejected"
+    "searching",
+    "ready",
+    "manual_required",
+    "confirming",
+    "failed",
+    "completed",
+    "rejected",
 ]
 
 _TERMINAL_STATUSES = frozenset({"completed", "rejected"})
 _MARKDOWN_LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
 _TRAILING_CITATION = re.compile(r"\s*(?:\[[^\]]+\]|https?://\S+)\s*$")
+_LOGGER = logging.getLogger(__name__)
 
 
 class IdentificationRequestConflictError(Exception):
@@ -63,6 +74,18 @@ class ProductIdentificationJob:
     error_code: str | None = None
     message: str | None = None
     elapsed_seconds: float | None = None
+    confirmed_product_name: str | None = None
+    accepted_aliases: tuple[str, ...] = ()
+
+    @property
+    def confirmation_request_id(self) -> str:
+        """Return the stable transaction ID shared with the legacy HA flow."""
+        base = (
+            self.request_id[: -len(":identify")]
+            if self.request_id.endswith(":identify")
+            else self.request_id
+        )
+        return f"{base}:confirm"
 
     def as_storage_dict(self) -> dict[str, Any]:
         """Return a JSON-safe storage representation."""
@@ -94,6 +117,11 @@ class ProductIdentificationJob:
             raw_location_id = payload.get("location_id")
             raw_quantity_unit_id = payload.get("quantity_unit_id")
             elapsed = payload.get("elapsed_seconds")
+            raw_aliases = payload.get("accepted_aliases", ())
+            if not isinstance(raw_aliases, (list, tuple)) or not all(
+                isinstance(item, str) for item in raw_aliases
+            ):
+                raise ValueError
             job = cls(
                 job_id=str(payload["job_id"]),
                 created_at=float(payload["created_at"]),
@@ -124,6 +152,12 @@ class ProductIdentificationJob:
                 error_code=_optional_string(payload.get("error_code")),
                 message=_optional_string(payload.get("message")),
                 elapsed_seconds=float(elapsed) if elapsed is not None else None,
+                confirmed_product_name=_optional_string(
+                    payload.get("confirmed_product_name")
+                ),
+                accepted_aliases=tuple(
+                    item.strip() for item in raw_aliases if item.strip()
+                ),
             )
         except (KeyError, TypeError, ValueError, InvalidOperation) as err:
             raise ValueError from err
@@ -133,6 +167,8 @@ class ProductIdentificationJob:
                 "searching",
                 "ready",
                 "manual_required",
+                "confirming",
+                "failed",
                 "completed",
                 "rejected",
             }
@@ -294,15 +330,33 @@ class ProductIdentificationStore:
             item for item in self._records.values() if item.status == "searching"
         )
 
+    def unresolved_jobs(self) -> tuple[ProductIdentificationJob, ...]:
+        """Return every non-terminal job oldest-first."""
+        return tuple(
+            sorted(
+                (
+                    item
+                    for item in self._records.values()
+                    if item.status not in _TERMINAL_STATUSES
+                ),
+                key=lambda value: value.created_at,
+            )
+        )
+
     def pending_snapshot(self) -> list[dict[str, Any]]:
         """Return unresolved work oldest-first for dashboard presentation."""
+        unresolved = self.unresolved_jobs()
+        pending = unresolved[:25]
+        queue_count = len(unresolved)
         return [
-            item.as_public_dict()
-            for item in sorted(
-                self._records.values(), key=lambda value: value.created_at
-            )
-            if item.status not in _TERMINAL_STATUSES
-        ][:25]
+            {
+                **item.as_public_dict(),
+                "queue_position": index,
+                "queue_count": queue_count,
+                "is_queue_head": index == 1,
+            }
+            for index, item in enumerate(pending, start=1)
+        ]
 
     def _prune_terminal_records(self) -> None:
         if len(self._records) < MAX_IDENTIFICATION_RECORDS:
@@ -339,17 +393,29 @@ class ProductIdentificationManager:
         hass: HomeAssistant,
         entry: GrocyStockManagerConfigEntry,
         store: ProductIdentificationStore,
+        journal: TransactionJournal,
+        aliases: GrocyVoiceAliases,
     ) -> None:
         self._hass = hass
         self._entry = entry
         self._store = store
+        self._journal = journal
+        self._aliases = aliases
         self._semaphore = asyncio.Semaphore(3)
+        self._confirmation_locks: defaultdict[str, asyncio.Lock] = defaultdict(
+            asyncio.Lock
+        )
 
     def async_resume(self) -> None:
         """Resume jobs interrupted by an HA restart."""
         for job in self._store.searching_jobs():
             self._fire_update(job)
             self._schedule(job.job_id)
+        self._entry.async_create_background_task(
+            self._hass,
+            self._async_recover_confirmations(),
+            "Recover product-identification confirmations",
+        )
 
     async def async_start(self, **data: Any) -> dict[str, Any]:
         """Persist an immutable intent and return before AI is invoked."""
@@ -363,7 +429,274 @@ class ProductIdentificationManager:
             "accepted": True,
             "replayed": replayed,
             "job": job.as_public_dict(),
+            "queue": self.queue_summary(job.job_id),
         }
+
+    def get(self, job_id: str) -> ProductIdentificationJob | None:
+        """Return one immutable job for service orchestration."""
+        return self._store.get(job_id)
+
+    def queue_summary(self, job_id: str | None = None) -> dict[str, Any]:
+        """Return compact queue metadata for scanner and tablet feedback."""
+        pending = self._store.unresolved_jobs()
+        position = next(
+            (
+                index
+                for index, item in enumerate(pending, start=1)
+                if item.job_id == job_id
+            ),
+            None,
+        )
+        return {
+            "pending_count": len(pending),
+            "position": position,
+            "head_job_id": pending[0].job_id if pending else None,
+        }
+
+    async def async_begin_confirmation(
+        self,
+        job_id: str,
+        product_name: str,
+        accepted_aliases: tuple[str, ...],
+    ) -> ProductIdentificationJob | None:
+        """Persist human confirmation data before any catalogue or stock write."""
+        async with self._confirmation_locks[job_id]:
+            current = self._store.get(job_id)
+            if current is None or current.status in _TERMINAL_STATUSES:
+                return current
+            if (
+                current.status == "confirming"
+                and current.confirmed_product_name is not None
+                and current.confirmed_product_name.casefold()
+                != product_name.casefold()
+            ):
+                return current
+            updated = await self._store.async_update(
+                job_id,
+                expected_statuses=frozenset(
+                    {
+                        "searching",
+                        "ready",
+                        "manual_required",
+                        "confirming",
+                        "failed",
+                    }
+                ),
+                status="confirming",
+                stage="confirming",
+                confirmed_product_name=product_name,
+                accepted_aliases=accepted_aliases,
+                error_code=None,
+                message="Confirming product and captured stock transaction",
+            )
+            if updated is not None:
+                self._fire_update(updated)
+            return updated
+
+    async def async_recover_job(
+        self, job_id: str
+    ) -> dict[str, Any] | None:
+        """Recover one confirmation from the durable transaction journal."""
+        current = self._store.get(job_id)
+        if current is None:
+            return None
+        prior = await self._journal.async_get(current.confirmation_request_id)
+        if prior is None:
+            return None
+        result = prior["result"]
+        if result.get("outcome") == "committed":
+            product_name = (
+                current.confirmed_product_name
+                or _optional_string(result.get("product_name"))
+                or current.candidate_name
+                or f"Unknown item ({current.barcode})"
+            )
+            return await self.async_mark_committed(
+                current.job_id,
+                product_name,
+                transaction=dict(result),
+                catalogue=None,
+                replayed=True,
+            )
+        if result.get("requires_reconciliation") or result.get("outcome") == "unknown":
+            failed = await self.async_mark_failed(
+                current.job_id,
+                error_code="transaction_outcome_unknown",
+                message=(
+                    "The stock outcome is uncertain; reconcile it before taking "
+                    "any further action on this review"
+                ),
+            )
+            return {
+                "response_version": 1,
+                "success": False,
+                "status": "failed",
+                "stock_changed": False,
+                "requires_reconciliation": True,
+                "job": failed.as_public_dict() if failed is not None else None,
+                "transaction": dict(result),
+                "queue": self.queue_summary(current.job_id),
+            }
+        return None
+
+    async def async_mark_committed(
+        self,
+        job_id: str,
+        product_name: str,
+        *,
+        transaction: dict[str, Any],
+        catalogue: dict[str, Any] | None,
+        replayed: bool,
+    ) -> dict[str, Any]:
+        """Complete queue work before best-effort alias metadata is written."""
+        current = self._store.get(job_id)
+        if current is None:
+            return {
+                "response_version": 1,
+                "success": False,
+                "status": "not_found",
+                "stock_changed": False,
+            }
+        updated = current
+        if current.status != "completed":
+            candidate = await self._store.async_update(
+                job_id,
+                expected_statuses=frozenset(
+                    {
+                        "searching",
+                        "ready",
+                        "manual_required",
+                        "confirming",
+                        "failed",
+                    }
+                ),
+                status="completed",
+                stage="completed",
+                candidate_name=product_name,
+                confirmed_product_name=product_name,
+                error_code=None,
+                message="Product confirmed and captured transaction committed",
+            )
+            if candidate is not None:
+                updated = candidate
+                self._fire_update(updated)
+
+        raw_product_id = transaction.get("product_id")
+        if isinstance(raw_product_id, int) and raw_product_id > 0:
+            alias_results, warnings = await self._async_learn_aliases(
+                updated,
+                raw_product_id,
+            )
+        else:
+            alias_results = []
+            warnings = (
+                ["Aliases were not learned because the product ID was unavailable."]
+                if updated.accepted_aliases
+                else []
+            )
+        return {
+            "response_version": 1,
+            "success": True,
+            "status": "committed",
+            "stock_changed": True,
+            "replayed": replayed,
+            "job": updated.as_public_dict(),
+            "catalogue": catalogue,
+            "transaction": transaction,
+            "alias_results": alias_results,
+            "warnings": warnings,
+            "queue": self.queue_summary(job_id),
+        }
+
+    async def async_return_for_review(
+        self,
+        job_id: str,
+        *,
+        error_code: str,
+        message: str,
+    ) -> ProductIdentificationJob | None:
+        """Return a safe pre-write rejection to the actionable queue."""
+        current = self._store.get(job_id)
+        status: IdentificationStatus = (
+            "ready"
+            if current is not None
+            and (current.confirmed_product_name or current.candidate_name)
+            else "manual_required"
+        )
+        updated = await self._store.async_update(
+            job_id,
+            expected_statuses=frozenset({"confirming"}),
+            status=status,
+            stage="confirmation" if status == "ready" else "manual_entry",
+            error_code=error_code,
+            message=message,
+        )
+        if updated is not None:
+            self._fire_update(updated)
+        return updated
+
+    async def async_mark_failed(
+        self,
+        job_id: str,
+        *,
+        error_code: str,
+        message: str,
+    ) -> ProductIdentificationJob | None:
+        """Keep uncertain work visible and fail closed."""
+        updated = await self._store.async_update(
+            job_id,
+            expected_statuses=frozenset(
+                {"searching", "ready", "manual_required", "confirming", "failed"}
+            ),
+            status="failed",
+            stage="reconciliation",
+            error_code=error_code,
+            message=message,
+        )
+        if updated is not None:
+            self._fire_update(updated)
+        return updated
+
+    async def _async_learn_aliases(
+        self,
+        job: ProductIdentificationJob,
+        product_id: int,
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        """Write optional voice aliases without changing the commit result."""
+        results: list[dict[str, Any]] = []
+        warnings: list[str] = []
+        for alias in job.accepted_aliases:
+            try:
+                learned = await self._aliases.async_learn(alias, product_id)
+            except Exception as err:  # Metadata failure must not relock stock work.
+                warning = f"Could not learn alias {alias!r} ({type(err).__name__})"
+                warnings.append(warning)
+                _LOGGER.warning("%s for product %s", warning, product_id)
+            else:
+                results.append({"product_phrase": alias, "learned": learned})
+        return results, warnings
+
+    async def _async_recover_confirmations(self) -> None:
+        """Resolve interrupted confirmations from journal evidence on startup."""
+        for job in self._store.unresolved_jobs():
+            recovered = await self.async_recover_job(job.job_id)
+            if recovered is not None:
+                continue
+            if job.status == "confirming":
+                updated = await self._store.async_update(
+                    job.job_id,
+                    expected_statuses=frozenset({"confirming"}),
+                    status="ready" if job.confirmed_product_name else "manual_required",
+                    stage=(
+                        "confirmation"
+                        if job.confirmed_product_name
+                        else "manual_entry"
+                    ),
+                    error_code="confirmation_interrupted_before_stock_write",
+                    message="Confirmation was interrupted safely; retry it",
+                )
+                if updated is not None:
+                    self._fire_update(updated)
 
     async def async_override(self, job_id: str) -> ProductIdentificationJob | None:
         """Move a searching or suggested job into immediate manual entry."""
@@ -395,7 +728,7 @@ class ProductIdentificationManager:
         updated = await self._store.async_update(
             job_id,
             expected_statuses=frozenset(
-                {"searching", "ready", "manual_required"}
+                {"searching", "ready", "manual_required", "confirming", "failed"}
             ),
             status="completed",
             stage="completed",
