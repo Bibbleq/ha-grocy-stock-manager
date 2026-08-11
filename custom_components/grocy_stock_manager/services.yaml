@@ -549,14 +549,28 @@ confirm_product_identification:
 override_product_identification:
   name: Override product identification now
   description: >-
-    Ignore any late AI result and move this durable job immediately to manual
-    product entry. The captured stock intent remains unchanged.
-  fields: &identification_job_fields
+    Ignore any late AI result and move this durable job to a persisted catalogue
+    suggestion or immediate manual product entry. The captured stock intent
+    remains unchanged.
+  fields:
     job_id:
       name: Identification job ID
       required: true
       selector:
         text:
+    product_name:
+      name: Product name
+      description: >-
+        Optional trusted catalogue suggestion to persist on this queue item.
+        Omit to request manual entry.
+      selector:
+        text:
+    product_aliases:
+      name: Voice aliases
+      description: Optional catalogue-derived aliases to retain with the suggestion.
+      selector:
+        text:
+          multiple: true
 
 complete_product_identification:
   name: Complete product identification
@@ -579,4 +593,9 @@ reject_product_identification:
   name: Reject product identification
   description: >-
     Explicitly reject one durable identification job. No stock is changed.
-  fields: *identification_job_fields
+  fields:
+    job_id:
+      name: Identification job ID
+      required: true
+      selector:
+        text:

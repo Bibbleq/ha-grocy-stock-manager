@@ -52,6 +52,7 @@ from custom_components.grocy_stock_manager.services import (
     _async_confirm_product_identification,
     _async_confirm_product_transaction,
     _async_mutate,
+    _async_override_product_identification,
     _async_undo_transaction,
 )
 from custom_components.grocy_stock_manager.transactions import (
@@ -59,6 +60,28 @@ from custom_components.grocy_stock_manager.transactions import (
 )
 
 from .test_models import PRODUCT_DETAILS, STOCK_LOCATIONS
+
+
+async def test_override_product_identification_forwards_catalogue_candidate() -> None:
+    job = SimpleNamespace(status="ready", as_public_dict=lambda: {"job_id": "job-1"})
+    manager = SimpleNamespace(async_override=AsyncMock(return_value=job))
+    entry = SimpleNamespace(runtime_data=SimpleNamespace(identification=manager))
+    call = SimpleNamespace(
+        data={
+            "job_id": "job-1",
+            ATTR_PRODUCT_NAME: "Crunchy peanut butter",
+            ATTR_PRODUCT_ALIASES: ("peanut butter",),
+        }
+    )
+
+    response = await _async_override_product_identification(entry, call)
+
+    manager.async_override.assert_awaited_once_with(
+        "job-1",
+        product_name="Crunchy peanut butter",
+        product_aliases=("peanut butter",),
+    )
+    assert response["status"] == "ready"
 
 
 async def test_expected_mutation_rejection_returns_structured_response(

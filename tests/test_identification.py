@@ -194,6 +194,42 @@ async def test_restart_recovers_committed_without_repeating_stock() -> None:
     assert store.get(job.job_id).status == "completed"
 
 
+async def test_catalogue_override_persists_candidate_on_the_queue_item() -> None:
+    manager, store, _aliases = _manager(_job())
+
+    updated = await manager.async_override(
+        "job-1",
+        product_name="Crunchy peanut butter",
+        product_aliases=("peanut butter", "crunchy peanut butter"),
+    )
+
+    assert updated is not None
+    assert updated.status == "ready"
+    assert updated.stage == "catalogue_result"
+    assert updated.candidate_name == "Crunchy peanut butter"
+    assert updated.accepted_aliases == (
+        "peanut butter",
+        "crunchy peanut butter",
+    )
+    assert store.pending_snapshot()[0]["candidate_name"] == (
+        "Crunchy peanut butter"
+    )
+
+
+async def test_manual_override_clears_an_existing_candidate() -> None:
+    manager, _store, _aliases = _manager(
+        replace(_job(), status="ready", candidate_name="Wrong result")
+    )
+
+    updated = await manager.async_override("job-1")
+
+    assert updated is not None
+    assert updated.status == "manual_required"
+    assert updated.stage == "manual_entry"
+    assert updated.candidate_name is None
+    assert updated.accepted_aliases == ()
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

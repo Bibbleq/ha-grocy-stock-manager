@@ -267,8 +267,10 @@ response_variable: identification
 ```
 
 Use the returned `job.job_id` in the tablet. The response also includes queue
-position/count data. Calling `override_product_identification` changes the
-durable job to `manual_required` immediately; any late AI response is ignored.
+position/count data. Calling `override_product_identification` with no product
+name changes the durable job to `manual_required` immediately. Supplying a
+trusted catalogue name and optional aliases persists that result on the same
+queue item. In either case, any late AI response is ignored.
 Confirm the queue item directly:
 
 ```yaml
