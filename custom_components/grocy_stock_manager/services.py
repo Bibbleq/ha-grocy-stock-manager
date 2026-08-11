@@ -441,6 +441,19 @@ IDENTIFICATION_JOB_SCHEMA = vol.Schema(
 )
 
 
+OVERRIDE_PRODUCT_IDENTIFICATION_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_JOB_ID): vol.All(
+            _non_empty_string, vol.Length(max=128)
+        ),
+        vol.Optional(ATTR_PRODUCT_NAME): vol.All(
+            _non_empty_string, vol.Length(max=255)
+        ),
+        vol.Optional(ATTR_PRODUCT_ALIASES, default=()): _product_aliases,
+    }
+)
+
+
 CONFIRM_PRODUCT_IDENTIFICATION_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_JOB_ID): vol.All(
@@ -1549,7 +1562,9 @@ async def _async_override_product_identification(
 ) -> ServiceResponse:
     """Let the tablet replace a slow AI lookup with immediate manual entry."""
     job = await entry.runtime_data.identification.async_override(
-        call.data[ATTR_JOB_ID]
+        call.data[ATTR_JOB_ID],
+        product_name=call.data.get(ATTR_PRODUCT_NAME),
+        product_aliases=call.data[ATTR_PRODUCT_ALIASES],
     )
     return _identification_response(job, action="override")
 
@@ -1842,7 +1857,7 @@ def async_setup_services(
         DOMAIN,
         SERVICE_OVERRIDE_PRODUCT_IDENTIFICATION,
         async_override_product_identification,
-        schema=IDENTIFICATION_JOB_SCHEMA,
+        schema=OVERRIDE_PRODUCT_IDENTIFICATION_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(

@@ -698,21 +698,33 @@ class ProductIdentificationManager:
                 if updated is not None:
                     self._fire_update(updated)
 
-    async def async_override(self, job_id: str) -> ProductIdentificationJob | None:
-        """Move a searching or suggested job into immediate manual entry."""
+    async def async_override(
+        self,
+        job_id: str,
+        *,
+        product_name: str | None = None,
+        product_aliases: tuple[str, ...] = (),
+    ) -> ProductIdentificationJob | None:
+        """Override AI with either a persisted catalogue result or manual entry."""
         current = self._store.get(job_id)
         if current is None or current.status in _TERMINAL_STATUSES:
             return current
+        has_candidate = product_name is not None
         updated = await self._store.async_update(
             job_id,
             expected_statuses=frozenset(
                 {"searching", "ready", "manual_required"}
             ),
-            status="manual_required",
-            stage="manual_entry",
-            candidate_name=None,
+            status="ready" if has_candidate else "manual_required",
+            stage="catalogue_result" if has_candidate else "manual_entry",
+            candidate_name=product_name,
+            accepted_aliases=product_aliases if has_candidate else (),
             error_code=None,
-            message="Manual product entry requested",
+            message=(
+                "Catalogue suggestion ready for confirmation"
+                if has_candidate
+                else "Manual product entry requested"
+            ),
         )
         if updated is not None:
             self._fire_update(updated)
