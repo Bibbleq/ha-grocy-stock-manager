@@ -192,6 +192,12 @@ quantity-unit ID, allowing later transaction actions to handle multipacks
 without guessing. An unknown or ambiguous identifier fails the action and does
 not return a guessed product.
 
+`add` and `consume` continue to accept an amount in the product's stock unit.
+For a scanner workflow, multiply the number of physical packs scanned by
+`matched_barcode.amount`. For example, one scan of a barcode mapped with an
+amount of `4` changes stock by four units; two scans change it by eight. House
+barcodes can remain mapped with an amount of `1`.
+
 ## Verified stock actions
 
 Call `grocy_stock_manager.add` or `grocy_stock_manager.consume` with exactly one
@@ -236,6 +242,7 @@ data:
   barcode: "0123456789012"
   product_name: Cat litter (Golden Grey)
   location_name: Garage Misc
+  barcode_amount: 1
 response_variable: grocy_catalogue
 ```
 
@@ -245,6 +252,11 @@ response cannot silently create a duplicate. If the barcode already belongs to
 a differently named product, the action fails closed. The older
 `confirm_product` action never changes stock; the atomic variant performs the
 captured verified add or consume immediately after confirmation.
+
+Set `barcode_amount` when one scanned outer package represents multiple stock
+units. The value is written to Grocy's barcode mapping. A retry verifies the
+same multiplier before reporting success, so it cannot silently reinterpret a
+four-pack as one item.
 
 ## Background product identification
 
@@ -281,11 +293,15 @@ data:
   product_aliases:
     - peanut butter
     - crunchy peanut butter
+  barcode_amount: 4
 response_variable: confirmation
 ```
 
 The integration derives the stable transaction request ID from the job and
-uses only its captured operation, quantity and shelf. It marks a verified
+uses only its captured operation, scan quantity and shelf. `barcode_amount`
+is persisted before catalogue or stock writes and scales that scan quantity;
+the example above therefore changes four stock units for each captured scan.
+It marks a verified
 commit complete before learning aliases, so an alias failure is returned as a
 warning and cannot block the next review. Repeating the action replays journal
 evidence without changing stock twice. On restart, interrupted confirmations

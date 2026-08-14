@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping, Sequence
+from decimal import Decimal
 from typing import Any
 from urllib.parse import quote, urlsplit, urlunsplit
 
@@ -359,15 +360,16 @@ class GrocyApiClient:
         barcode: str,
         *,
         quantity_unit_id: int,
+        amount: Decimal = Decimal("1"),
     ) -> int:
-        """Attach one exact barcode representing one stock unit to a product."""
+        """Attach one exact barcode representing a stock-unit quantity."""
         payload = await self._async_post_json(
             "objects/product_barcodes",
             {
                 "product_id": product_id,
                 "barcode": barcode,
                 "qu_id": quantity_unit_id,
-                "amount": 1,
+                "amount": format(amount, "f"),
             },
         )
         return _created_object_id(payload)

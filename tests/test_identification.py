@@ -39,13 +39,15 @@ def _job() -> ProductIdentificationJob:
 
 
 def test_identification_job_round_trip_preserves_barcode_and_decimal() -> None:
+    original = replace(_job(), confirmed_barcode_amount=Decimal("4"))
     restored = ProductIdentificationJob.from_storage_dict(
-        _job().as_storage_dict()
+        original.as_storage_dict()
     )
 
-    assert restored == _job()
+    assert restored == original
     assert restored.barcode == "05000166157315"
     assert restored.amount == Decimal("4")
+    assert restored.confirmed_barcode_amount == Decimal("4")
 
 
 def test_confirmation_request_id_matches_legacy_idempotency_key() -> None:
@@ -236,6 +238,7 @@ async def test_manual_override_clears_an_existing_candidate() -> None:
         ("status", "mystery"),
         ("operation", "transfer"),
         ("amount", "0"),
+        ("confirmed_barcode_amount", "0"),
         ("request_id", ""),
     ],
 )

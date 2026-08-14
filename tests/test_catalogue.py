@@ -1,5 +1,6 @@
 """Tests for confirmed and retry-safe product onboarding."""
 
+from decimal import Decimal
 from unittest.mock import AsyncMock
 
 import pytest
@@ -23,10 +24,20 @@ from custom_components.grocy_stock_manager.models import (
 from .test_models import PRODUCT_DETAILS, STOCK_LOCATIONS
 
 
-def _lookup(*, name: str = "Cat litter (Synthetic Grey)") -> ProductLookupResult:
+def _lookup(
+    *,
+    name: str = "Cat litter (Synthetic Grey)",
+    barcode_amount: str = "1",
+) -> ProductLookupResult:
     payload = {
         **PRODUCT_DETAILS,
         "product": {**PRODUCT_DETAILS["product"], "name": name},
+        "product_barcodes": [
+            {
+                **PRODUCT_DETAILS["product_barcodes"][0],
+                "amount": barcode_amount,
+            }
+        ],
     }
     product = ProductDetails.from_payload(payload)
     return ProductLookupResult(
@@ -69,7 +80,10 @@ async def test_confirm_creates_product_barcode_and_verifies() -> None:
         "Cat litter (Synthetic Grey)", location_id=12, quantity_unit_id=4
     )
     client.async_create_product_barcode.assert_awaited_once_with(
-        1, "04260066669009", quantity_unit_id=4
+        1,
+        "04260066669009",
+        quantity_unit_id=4,
+        amount=Decimal("1"),
     )
 
 
@@ -95,7 +109,40 @@ async def test_confirm_maps_to_exact_existing_product() -> None:
     assert result["product_created"] is False
     client.async_create_product.assert_not_awaited()
     client.async_create_product_barcode.assert_awaited_once_with(
-        1, "04260066669009", quantity_unit_id=4
+        1,
+        "04260066669009",
+        quantity_unit_id=4,
+        amount=Decimal("1"),
+    )
+
+
+async def test_confirm_persists_multipack_amount_on_barcode() -> None:
+    """One outer barcode can represent several product stock units."""
+    client = AsyncMock()
+    resolver = AsyncMock()
+    resolver.async_lookup_by_barcode.side_effect = [
+        GrocyNotFoundError,
+        _lookup(barcode_amount="4"),
+    ]
+    client.async_get_product_by_name.return_value = PRODUCT_DETAILS
+    client.async_create_product_barcode.return_value = 10
+    manager = GrocyCatalogueManager(client, resolver)
+
+    await manager.async_confirm_product(
+        barcode="04260066669009",
+        product_name="Cat litter (Synthetic Grey)",
+        location_id=None,
+        location_name="Garage Synthetic",
+        quantity_unit_id=None,
+        quantity_unit_name=None,
+        barcode_amount=Decimal("4"),
+    )
+
+    client.async_create_product_barcode.assert_awaited_once_with(
+        1,
+        "04260066669009",
+        quantity_unit_id=4,
+        amount=Decimal("4"),
     )
 
 

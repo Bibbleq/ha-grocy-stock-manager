@@ -75,6 +75,7 @@ class ProductIdentificationJob:
     message: str | None = None
     elapsed_seconds: float | None = None
     confirmed_product_name: str | None = None
+    confirmed_barcode_amount: Decimal | None = None
     accepted_aliases: tuple[str, ...] = ()
 
     @property
@@ -91,12 +92,20 @@ class ProductIdentificationJob:
         """Return a JSON-safe storage representation."""
         payload = asdict(self)
         payload["amount"] = format(self.amount, "f")
+        if self.confirmed_barcode_amount is not None:
+            payload["confirmed_barcode_amount"] = format(
+                self.confirmed_barcode_amount, "f"
+            )
         return payload
 
     def as_public_dict(self) -> dict[str, Any]:
         """Return safe job data for services, events and entities."""
         payload = self.as_storage_dict()
         payload["amount"] = float(self.amount)
+        if self.confirmed_barcode_amount is not None:
+            payload["confirmed_barcode_amount"] = float(
+                self.confirmed_barcode_amount
+            )
         payload["created_at"] = datetime.fromtimestamp(
             self.created_at, UTC
         ).isoformat()
@@ -117,6 +126,9 @@ class ProductIdentificationJob:
             raw_location_id = payload.get("location_id")
             raw_quantity_unit_id = payload.get("quantity_unit_id")
             elapsed = payload.get("elapsed_seconds")
+            raw_confirmed_barcode_amount = payload.get(
+                "confirmed_barcode_amount"
+            )
             raw_aliases = payload.get("accepted_aliases", ())
             if not isinstance(raw_aliases, (list, tuple)) or not all(
                 isinstance(item, str) for item in raw_aliases
@@ -155,6 +167,11 @@ class ProductIdentificationJob:
                 confirmed_product_name=_optional_string(
                     payload.get("confirmed_product_name")
                 ),
+                confirmed_barcode_amount=(
+                    Decimal(str(raw_confirmed_barcode_amount))
+                    if raw_confirmed_barcode_amount is not None
+                    else None
+                ),
                 accepted_aliases=tuple(
                     item.strip() for item in raw_aliases if item.strip()
                 ),
@@ -179,6 +196,13 @@ class ProductIdentificationJob:
             or not job.source
             or not amount.is_finite()
             or amount <= 0
+            or (
+                job.confirmed_barcode_amount is not None
+                and (
+                    not job.confirmed_barcode_amount.is_finite()
+                    or job.confirmed_barcode_amount <= 0
+                )
+            )
         ):
             raise ValueError
         return job
@@ -458,6 +482,7 @@ class ProductIdentificationManager:
         job_id: str,
         product_name: str,
         accepted_aliases: tuple[str, ...],
+        barcode_amount: Decimal,
     ) -> ProductIdentificationJob | None:
         """Persist human confirmation data before any catalogue or stock write."""
         async with self._confirmation_locks[job_id]:
@@ -467,8 +492,11 @@ class ProductIdentificationManager:
             if (
                 current.status == "confirming"
                 and current.confirmed_product_name is not None
-                and current.confirmed_product_name.casefold()
-                != product_name.casefold()
+                and (
+                    current.confirmed_product_name.casefold()
+                    != product_name.casefold()
+                    or current.confirmed_barcode_amount != barcode_amount
+                )
             ):
                 return current
             updated = await self._store.async_update(
@@ -485,6 +513,7 @@ class ProductIdentificationManager:
                 status="confirming",
                 stage="confirming",
                 confirmed_product_name=product_name,
+                confirmed_barcode_amount=barcode_amount,
                 accepted_aliases=accepted_aliases,
                 error_code=None,
                 message="Confirming product and captured stock transaction",

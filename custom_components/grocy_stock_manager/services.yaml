@@ -25,7 +25,6 @@ lookup:
       example: Cat litter
       selector:
         text:
-
 confirm_product:
   name: Confirm Grocy product
   description: >-
@@ -47,6 +46,18 @@ confirm_product:
       required: true
       selector:
         text:
+    barcode_amount:
+      name: Units represented by this barcode
+      description: >-
+        One for a normal item, or the number of stock units in a multipack.
+        This value is stored on the Grocy barcode mapping.
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 1000
+          step: 1
+          mode: box
     location_id:
       name: Default location ID
       description: Exact Grocy default location ID; do not also set a name.
@@ -92,6 +103,18 @@ confirm_product_transaction:
       required: true
       selector:
         text:
+    barcode_amount:
+      name: Units represented by this barcode
+      description: >-
+        One for a normal item, or the number of stock units in a multipack.
+        The captured scan amount is multiplied by this value.
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 1000
+          step: 1
+          mode: box
     operation:
       name: Original operation
       description: The add or consume action captured when the barcode was scanned.
@@ -545,6 +568,19 @@ confirm_product_identification:
       selector:
         text:
           multiple: true
+    barcode_amount:
+      name: Units represented by this barcode
+      description: >-
+        Number of product stock units represented by one scan. Use 1 for a
+        normal item, 4 for a four-pack, and so on. The value is stored on the
+        Grocy barcode mapping and scales the captured stock action.
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 1000
+          step: 1
+          mode: box
 
 override_product_identification:
   name: Override product identification now

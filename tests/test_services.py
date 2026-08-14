@@ -11,6 +11,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.grocy_stock_manager.const import (
     ATTR_AMOUNT,
     ATTR_BARCODE,
+    ATTR_BARCODE_AMOUNT,
     ATTR_LOCATION_ID,
     ATTR_OPERATION,
     ATTR_ORIGINAL_REQUEST_ID,
@@ -280,6 +281,7 @@ async def test_confirm_product_transaction_preserves_original_consume_intent() -
             ATTR_PRODUCT_NAME: "Desk test item",
             ATTR_OPERATION: "consume",
             ATTR_AMOUNT: Decimal("1"),
+            ATTR_BARCODE_AMOUNT: Decimal("4"),
             ATTR_LOCATION_ID: 12,
             ATTR_REQUEST_ID: "scan-unknown-consume-1",
             ATTR_SOURCE: "garage_scanner",
@@ -292,7 +294,7 @@ async def test_confirm_product_transaction_preserves_original_consume_intent() -
     transactions.async_execute.assert_awaited_once_with(
         "consume",
         lookup_result,
-        amount=Decimal("1"),
+        amount=Decimal("4"),
         request_id="scan-unknown-consume-1",
         location_id=12,
         location_name=None,
@@ -316,6 +318,7 @@ async def test_queued_confirmation_uses_only_the_jobs_immutable_intent() -> None
         quantity_unit_id=None,
         quantity_unit_name="Pack",
         confirmed_product_name="Desk test item",
+        confirmed_barcode_amount=Decimal("4"),
         as_public_dict=lambda: {"job_id": "job-1", "status": "ready"},
     )
     manager = SimpleNamespace(
@@ -334,6 +337,7 @@ async def test_queued_confirmation_uses_only_the_jobs_immutable_intent() -> None
             "job_id": "job-1",
             ATTR_PRODUCT_NAME: "Desk test item",
             ATTR_PRODUCT_ALIASES: ("desk item",),
+            ATTR_BARCODE_AMOUNT: Decimal("4"),
         },
     )
     transaction = {
@@ -361,6 +365,7 @@ async def test_queued_confirmation_uses_only_the_jobs_immutable_intent() -> None
     immutable = confirm.await_args.args[1].data
     assert immutable[ATTR_OPERATION] == "consume"
     assert immutable[ATTR_AMOUNT] == Decimal("2")
+    assert immutable[ATTR_BARCODE_AMOUNT] == Decimal("4")
     assert immutable[ATTR_LOCATION_ID] == 12
     assert immutable[ATTR_REQUEST_ID] == "garage:scanner:42:confirm"
 

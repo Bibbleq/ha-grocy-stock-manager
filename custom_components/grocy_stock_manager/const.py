@@ -27,6 +27,7 @@ SERVICE_COMPLETE_PRODUCT_IDENTIFICATION: Final = "complete_product_identificatio
 SERVICE_REJECT_PRODUCT_IDENTIFICATION: Final = "reject_product_identification"
 
 ATTR_BARCODE: Final = "barcode"
+ATTR_BARCODE_AMOUNT: Final = "barcode_amount"
 ATTR_PRODUCT_ID: Final = "product_id"
 ATTR_PRODUCT_NAME: Final = "product_name"
 ATTR_AMOUNT: Final = "amount"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping, Sequence
+from decimal import Decimal
 from typing import Any
 
 from .api import (
@@ -119,6 +120,18 @@ class GrocyCatalogueManager:
             raise CatalogueBarcodeConflictError
 
     @staticmethod
+    def _assert_barcode_amount(
+        lookup: ProductLookupResult,
+        barcode_amount: Decimal,
+    ) -> None:
+        """Require Grocy to return the exact multiplier just requested."""
+        if (
+            lookup.matched_barcode is None
+            or lookup.matched_barcode.amount != barcode_amount
+        ):
+            raise CatalogueBarcodeConflictError
+
+    @staticmethod
     def _response(
         lookup: ProductLookupResult,
         *,
@@ -201,6 +214,7 @@ class GrocyCatalogueManager:
         location_name: str | None,
         quantity_unit_id: int | None,
         quantity_unit_name: str | None,
+        barcode_amount: Decimal | None = None,
     ) -> dict[str, Any]:
         """Idempotently create/map a confirmed barcode and verify the result."""
         barcode = barcode.strip()
@@ -209,6 +223,8 @@ class GrocyCatalogueManager:
         async with self._lock:
             existing = await self._async_existing_barcode(barcode, product_name)
             if existing is not None:
+                if barcode_amount is not None:
+                    self._assert_barcode_amount(existing, barcode_amount)
                 return self._response(
                     existing,
                     action="existing",
@@ -261,6 +277,7 @@ class GrocyCatalogueManager:
                     product.id,
                     barcode,
                     quantity_unit_id=product.quantity_unit.id,
+                    amount=barcode_amount or Decimal("1"),
                 )
             except GrocyMutationOutcomeUnknownError:
                 # Verification converts a lost response into a known success only
@@ -268,6 +285,9 @@ class GrocyCatalogueManager:
                 recovered = await self._async_existing_barcode(barcode, product_name)
                 if recovered is None:
                     raise
+                self._assert_barcode_amount(
+                    recovered, barcode_amount or Decimal("1")
+                )
                 return self._response(
                     recovered,
                     action="created" if product_created else "mapped",
@@ -282,6 +302,9 @@ class GrocyCatalogueManager:
             if verified.product.id != product.id:
                 raise CatalogueBarcodeConflictError
             self._assert_same_product(verified, product_name)
+            self._assert_barcode_amount(
+                verified, barcode_amount or Decimal("1")
+            )
             return self._response(
                 verified,
                 action="created" if product_created else "mapped",

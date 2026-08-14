@@ -36,6 +36,7 @@ from .const import (
     ATTR_AGENT_ID,
     ATTR_AMOUNT,
     ATTR_BARCODE,
+    ATTR_BARCODE_AMOUNT,
     ATTR_CANDIDATE_LIMIT,
     ATTR_CANONICAL_NAME,
     ATTR_CONFIRMATION_TOKEN,
@@ -231,6 +232,7 @@ CONFIRM_PRODUCT_SCHEMA = vol.All(
             vol.Required(ATTR_PRODUCT_NAME): vol.All(
                 _non_empty_string, vol.Length(max=255)
             ),
+            vol.Optional(ATTR_BARCODE_AMOUNT): _positive_decimal,
             vol.Optional(ATTR_LOCATION_ID): vol.All(vol.Coerce(int), vol.Range(min=1)),
             vol.Optional(ATTR_LOCATION_NAME): vol.All(
                 _non_empty_string, vol.Length(max=255)
@@ -259,6 +261,7 @@ CONFIRM_PRODUCT_TRANSACTION_SCHEMA = vol.All(
             ),
             vol.Required(ATTR_OPERATION): vol.In(("add", "consume")),
             vol.Required(ATTR_AMOUNT, default=Decimal("1")): _positive_decimal,
+            vol.Optional(ATTR_BARCODE_AMOUNT): _positive_decimal,
             vol.Optional(ATTR_LOCATION_ID): vol.All(
                 vol.Coerce(int), vol.Range(min=1)
             ),
@@ -450,6 +453,9 @@ OVERRIDE_PRODUCT_IDENTIFICATION_SCHEMA = vol.Schema(
             _non_empty_string, vol.Length(max=255)
         ),
         vol.Optional(ATTR_PRODUCT_ALIASES, default=()): _product_aliases,
+        vol.Optional(
+            ATTR_BARCODE_AMOUNT, default=Decimal("1")
+        ): _positive_decimal,
     }
 )
 
@@ -707,6 +713,7 @@ async def _async_confirm_product(
             location_name=call.data.get(ATTR_LOCATION_NAME),
             quantity_unit_id=call.data.get(ATTR_QUANTITY_UNIT_ID),
             quantity_unit_name=call.data.get(ATTR_QUANTITY_UNIT_NAME),
+            barcode_amount=call.data.get(ATTR_BARCODE_AMOUNT),
         )
     except CatalogueBarcodeConflictError as err:
         raise ServiceValidationError(
@@ -811,6 +818,7 @@ async def _async_confirm_product_transaction(
             location_name=call.data.get(ATTR_LOCATION_NAME),
             quantity_unit_id=call.data.get(ATTR_QUANTITY_UNIT_ID),
             quantity_unit_name=call.data.get(ATTR_QUANTITY_UNIT_NAME),
+            barcode_amount=call.data.get(ATTR_BARCODE_AMOUNT),
         )
         lookup = await entry.runtime_data.resolver.async_lookup_by_barcode(
             call.data[ATTR_BARCODE]
@@ -818,7 +826,10 @@ async def _async_confirm_product_transaction(
         transaction = await entry.runtime_data.transactions.async_execute(
             call.data[ATTR_OPERATION],
             lookup,
-            amount=call.data[ATTR_AMOUNT],
+            amount=(
+                call.data[ATTR_AMOUNT]
+                * call.data.get(ATTR_BARCODE_AMOUNT, Decimal("1"))
+            ),
             request_id=call.data[ATTR_REQUEST_ID],
             location_id=call.data.get(ATTR_LOCATION_ID),
             location_name=call.data.get(ATTR_LOCATION_NAME),
@@ -1386,6 +1397,7 @@ async def _async_confirm_product_identification(
     job_id = call.data[ATTR_JOB_ID]
     product_name = call.data[ATTR_PRODUCT_NAME]
     aliases = call.data[ATTR_PRODUCT_ALIASES]
+    barcode_amount = call.data.get(ATTR_BARCODE_AMOUNT, Decimal("1"))
     current = manager.get(job_id)
     if current is None:
         return {
@@ -1424,6 +1436,7 @@ async def _async_confirm_product_identification(
         job_id,
         product_name,
         aliases,
+        barcode_amount,
     )
     if begun is None:
         return {
@@ -1455,6 +1468,10 @@ async def _async_confirm_product_identification(
             ATTR_PRODUCT_NAME: begun.confirmed_product_name or product_name,
             ATTR_OPERATION: begun.operation,
             ATTR_AMOUNT: begun.amount,
+            ATTR_BARCODE_AMOUNT: (
+                getattr(begun, "confirmed_barcode_amount", None)
+                or Decimal("1")
+            ),
             ATTR_REQUEST_ID: begun.confirmation_request_id,
             ATTR_SOURCE: begun.source,
             **(

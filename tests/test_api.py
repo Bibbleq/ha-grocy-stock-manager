@@ -296,7 +296,7 @@ async def test_catalogue_reads_and_creates_use_generic_object_routes() -> None:
         "product_id": 7,
         "barcode": "001234",
         "qu_id": 4,
-        "amount": 1,
+        "amount": "1",
     }
 
 
