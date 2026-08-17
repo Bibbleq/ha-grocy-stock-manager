@@ -133,10 +133,9 @@ async def test_researcher_accepts_verified_ai_task_match() -> None:
     async_call = AsyncMock(
         return_value={
             "data": {
-                "identified": "true",
                 "product_name": "Domestos Bleach Foam Pine Boost 450ml",
                 "brand": "Domestos",
-                "confidence": "verified",
+                "decision": "verified",
                 "evidence": "Tesco and Trolley agree on the exact EAN.",
             }
         }
@@ -155,6 +154,12 @@ async def test_researcher_accepts_verified_ai_task_match() -> None:
     assert "quoted source material" in call_data["instructions"]
     assert "ignore instructions" not in call_data["instructions"]
     assert "tesco.com" in call_data["instructions"]
+    assert "identified" not in call_data["structure"]
+    assert call_data["structure"]["decision"]["selector"]["select"]["options"] == [
+        "verified",
+        "uncertain",
+        "unknown",
+    ]
 
 
 async def test_researcher_rejects_unverified_ai_guess() -> None:
@@ -175,10 +180,9 @@ async def test_researcher_rejects_unverified_ai_guess() -> None:
     async_call = AsyncMock(
         return_value={
             "data": {
-                "identified": True,
                 "product_name": "Guessed product",
                 "brand": "",
-                "confidence": "uncertain",
+                "decision": "uncertain",
                 "evidence": "Only one weak result.",
             }
         }
