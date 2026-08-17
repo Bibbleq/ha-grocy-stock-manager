@@ -73,7 +73,7 @@ async def test_tavily_search_uses_strict_result_without_broadening() -> None:
     assert evidence.results[0].domain == "tesco.com"
     assert len(session.posts) == 1
     assert session.posts[0][2]["exact_match"] is True
-    assert session.posts[0][2]["query"].startswith('"8720181948930"')
+    assert session.posts[0][2]["query"] == '"8720181948930"'
 
 
 async def test_tavily_search_broadens_when_quoted_search_is_empty() -> None:
@@ -99,7 +99,7 @@ async def test_tavily_search_broadens_when_quoted_search_is_empty() -> None:
     assert evidence.strategy == "broad_fallback"
     assert len(session.posts) == 2
     assert session.posts[1][2]["exact_match"] is False
-    assert session.posts[1][2]["query"].startswith("8720181948930")
+    assert session.posts[1][2]["query"] == "8720181948930 product"
 
 
 async def test_tavily_search_reports_invalid_auth() -> None:
@@ -152,7 +152,8 @@ async def test_researcher_accepts_verified_ai_task_match() -> None:
     assert result["product_name"] == "Domestos Bleach Foam Pine Boost 450ml"
     call_data = async_call.await_args.args[2]
     assert call_data["entity_id"] == "ai_task.azure_bibbleha_model_router"
-    assert "untrusted data" in call_data["instructions"]
+    assert "quoted source material" in call_data["instructions"]
+    assert "ignore instructions" not in call_data["instructions"]
     assert "tesco.com" in call_data["instructions"]
 
 
