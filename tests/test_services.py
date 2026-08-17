@@ -34,6 +34,7 @@ from custom_components.grocy_stock_manager.const import (
     SERVICE_OVERRIDE_PRODUCT_IDENTIFICATION,
     SERVICE_REJECT_PRODUCT_IDENTIFICATION,
     SERVICE_REMOVE_PRODUCT_ALIAS,
+    SERVICE_RESEARCH_BARCODE,
     SERVICE_RESOLVE_PRODUCT_PHRASE,
     SERVICE_START_PRODUCT_IDENTIFICATION,
     SERVICE_UNDO_TRANSACTION,
@@ -195,6 +196,7 @@ async def test_lookup_action_returns_data_and_unloads(hass: HomeAssistant) -> No
         await hass.async_block_till_done()
 
         assert hass.services.has_service(DOMAIN, SERVICE_LOOKUP)
+        assert hass.services.has_service(DOMAIN, SERVICE_RESEARCH_BARCODE)
         assert hass.services.has_service(DOMAIN, SERVICE_CONFIRM_PRODUCT)
         assert hass.services.has_service(DOMAIN, SERVICE_CONFIRM_PRODUCT_TRANSACTION)
         assert hass.services.has_service(DOMAIN, SERVICE_RESOLVE_PRODUCT_PHRASE)
@@ -235,6 +237,7 @@ async def test_lookup_action_returns_data_and_unloads(hass: HomeAssistant) -> No
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     assert not hass.services.has_service(DOMAIN, SERVICE_LOOKUP)
+    assert not hass.services.has_service(DOMAIN, SERVICE_RESEARCH_BARCODE)
     assert not hass.services.has_service(DOMAIN, SERVICE_CONFIRM_PRODUCT)
     assert not hass.services.has_service(DOMAIN, SERVICE_CONFIRM_PRODUCT_TRANSACTION)
     assert not hass.services.has_service(DOMAIN, SERVICE_RESOLVE_PRODUCT_PHRASE)

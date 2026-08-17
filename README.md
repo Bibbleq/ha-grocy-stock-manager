@@ -71,8 +71,9 @@ The current build provides:
   captured transaction, clears committed work before optional aliases are
   learned, and recovers interrupted confirmations from the transaction journal.
 - Fire-and-forget AI identification through a configured Home Assistant
-  conversation agent, with a 45-second timeout, restart recovery and a manual
-  override that safely discards late results.
+  conversation agent or AI Task, with optional evidence-gated web research, a
+  45-second timeout, restart recovery and a manual override that safely
+  discards late results.
 - A one-shot `undo_transaction` action for verified adds and consumes, plus an
   explicit `acknowledge_reconciliation` action after a physical stock check.
 - Five-minute inventory polling plus an immediate refresh request after
@@ -87,6 +88,34 @@ the scanner intent and returns before AI starts. The Status sensor and
 manual-required, confirming, failed, completed and rejected states. A candidate
 must still be confirmed before `confirm_product_identification` can create or
 map it and apply the immutable captured intent.
+
+## Web-grounded barcode research
+
+For products missed by Grocy and the deterministic lookup providers, the
+integration can research the exact barcode before asking an AI Task to name it.
+Create a Tavily API key, then open **Settings > Devices & services > Grocy Stock
+Manager > Reconfigure** and enter it in **Tavily API key**. The credential is
+stored in the Home Assistant config entry, redacted from diagnostics, and never
+returned by an action.
+
+`grocy_stock_manager.research_barcode` first tries a quoted exact-code query. If
+the search index returns nothing, it retries with the same barcode digits in a
+broader query. Only a bounded evidence packet is supplied to the AI Task. The
+result is accepted only when one result explicitly pairs the exact barcode and
+product, or two independent domains agree. Prefix-only and nearby-code guesses
+are rejected.
+
+```yaml
+action: grocy_stock_manager.research_barcode
+data:
+  barcode: "8720181948930"
+  ai_task_entity_id: ai_task.azure_bibbleha_model_router
+response_variable: barcode_research
+```
+
+This action is read-only. It returns a verified candidate or a stable failure
+code such as `no_web_results`, `no_verified_match`, or
+`web_search_not_configured`; it never creates a Grocy product or changes stock.
 
 ## Voice product names
 
@@ -262,8 +291,10 @@ four-pack as one item.
 
 After Grocy and fast deterministic providers return no match, call
 `grocy_stock_manager.start_product_identification`. It stores the complete
-intent before returning `accepted: true`; the conversation lookup then runs in
-a bounded background task and cannot hold the scanner queue open.
+intent before returning `accepted: true`; the configured conversation or AI
+Task lookup then runs in a bounded background task and cannot hold the scanner
+queue open. When an `ai_task.*` entity is supplied and Tavily is configured,
+the background task uses the same evidence-gated research path described above.
 
 ```yaml
 action: grocy_stock_manager.start_product_identification
@@ -275,6 +306,7 @@ data:
   quantity_unit_name: Pack
   request_id: garage:scanner:boot:sequence
   source: garage_scanner
+  agent_id: ai_task.azure_bibbleha_model_router
 response_variable: identification
 ```
 

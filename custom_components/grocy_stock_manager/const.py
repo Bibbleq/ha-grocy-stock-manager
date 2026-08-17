@@ -5,8 +5,11 @@ from typing import Final
 DOMAIN: Final = "grocy_stock_manager"
 DEFAULT_REQUEST_TIMEOUT: Final = 10
 DEFAULT_VERIFY_SSL: Final = True
+CONF_TAVILY_API_KEY: Final = "tavily_api_key"
+DEFAULT_WEB_SEARCH_TIMEOUT: Final = 12
 
 SERVICE_LOOKUP: Final = "lookup"
+SERVICE_RESEARCH_BARCODE: Final = "research_barcode"
 SERVICE_ADD: Final = "add"
 SERVICE_CONSUME: Final = "consume"
 SERVICE_CONFIRM_PRODUCT: Final = "confirm_product"
@@ -49,6 +52,7 @@ ATTR_DRY_RUN: Final = "dry_run"
 ATTR_ORIGINAL_REQUEST_ID: Final = "original_request_id"
 ATTR_NOTE: Final = "note"
 ATTR_AGENT_ID: Final = "agent_id"
+ATTR_AI_TASK_ENTITY_ID: Final = "ai_task_entity_id"
 ATTR_JOB_ID: Final = "job_id"
 ATTR_PRODUCT_ALIASES: Final = "product_aliases"
 

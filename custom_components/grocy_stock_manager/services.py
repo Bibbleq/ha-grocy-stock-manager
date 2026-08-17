@@ -34,6 +34,7 @@ from .catalogue import (
 )
 from .const import (
     ATTR_AGENT_ID,
+    ATTR_AI_TASK_ENTITY_ID,
     ATTR_AMOUNT,
     ATTR_BARCODE,
     ATTR_BARCODE_AMOUNT,
@@ -75,6 +76,7 @@ from .const import (
     SERVICE_OVERRIDE_PRODUCT_IDENTIFICATION,
     SERVICE_REJECT_PRODUCT_IDENTIFICATION,
     SERVICE_REMOVE_PRODUCT_ALIAS,
+    SERVICE_RESEARCH_BARCODE,
     SERVICE_RESOLVE_PRODUCT_PHRASE,
     SERVICE_START_PRODUCT_IDENTIFICATION,
     SERVICE_UNDO_TRANSACTION,
@@ -139,6 +141,17 @@ LOOKUP_SCHEMA = vol.All(
         }
     ),
     _exactly_one_identifier,
+)
+
+RESEARCH_BARCODE_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_BARCODE): vol.All(
+            _non_empty_string, vol.Length(max=128)
+        ),
+        vol.Required(ATTR_AI_TASK_ENTITY_ID): vol.All(
+            _non_empty_string, vol.Length(max=255)
+        ),
+    }
 )
 
 
@@ -1688,6 +1701,12 @@ def async_setup_services(
     async def async_lookup(call: ServiceCall) -> ServiceResponse:
         return await _async_lookup(entry, call)
 
+    async def async_research_barcode(call: ServiceCall) -> ServiceResponse:
+        return await entry.runtime_data.researcher.async_research(
+            call.data[ATTR_BARCODE],
+            call.data[ATTR_AI_TASK_ENTITY_ID],
+        )
+
     async def async_add(call: ServiceCall) -> ServiceResponse:
         return await _async_mutate(entry, call, "add")
 
@@ -1763,6 +1782,13 @@ def async_setup_services(
         SERVICE_LOOKUP,
         async_lookup,
         schema=LOOKUP_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_RESEARCH_BARCODE,
+        async_research_barcode,
+        schema=RESEARCH_BARCODE_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
@@ -1897,6 +1923,7 @@ def async_setup_services(
 def async_unload_services(hass: HomeAssistant) -> None:
     """Remove Grocy Stock Manager actions."""
     hass.services.async_remove(DOMAIN, SERVICE_LOOKUP)
+    hass.services.async_remove(DOMAIN, SERVICE_RESEARCH_BARCODE)
     hass.services.async_remove(DOMAIN, SERVICE_ADD)
     hass.services.async_remove(DOMAIN, SERVICE_CONSUME)
     hass.services.async_remove(DOMAIN, SERVICE_CONFIRM_PRODUCT)

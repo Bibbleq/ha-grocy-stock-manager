@@ -18,7 +18,8 @@
         "data": {
           "url": "Grocy URL",
           "api_key": "API key",
-          "verify_ssl": "Verify SSL certificate"
+          "verify_ssl": "Verify SSL certificate",
+          "tavily_api_key": "Tavily API key (optional)"
         }
       },
       "reauth_confirm": {
@@ -34,7 +35,8 @@
         "data": {
           "url": "Grocy URL",
           "api_key": "API key",
-          "verify_ssl": "Verify SSL certificate"
+          "verify_ssl": "Verify SSL certificate",
+          "tavily_api_key": "Tavily API key (optional)"
         }
       }
     },

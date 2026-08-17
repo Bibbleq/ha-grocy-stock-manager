@@ -25,7 +25,7 @@ from .api import (
     GrocyInvalidResponseError,
     normalise_base_url,
 )
-from .const import DEFAULT_VERIFY_SSL, DOMAIN
+from .const import CONF_TAVILY_API_KEY, DEFAULT_VERIFY_SSL, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,6 +38,9 @@ CONFIG_SCHEMA = vol.Schema(
             TextSelectorConfig(type=TextSelectorType.PASSWORD)
         ),
         vol.Required(CONF_VERIFY_SSL, default=DEFAULT_VERIFY_SSL): BooleanSelector(),
+        vol.Optional(CONF_TAVILY_API_KEY): TextSelector(
+            TextSelectorConfig(type=TextSelectorType.PASSWORD)
+        ),
     }
 )
 
@@ -144,6 +147,11 @@ class GrocyStockManagerConfigFlow(ConfigFlow, domain=DOMAIN):
         """Validate and canonicalise connection data."""
         errors: dict[str, str] = {}
         validated_data = dict(user_input)
+        tavily_key = str(validated_data.get(CONF_TAVILY_API_KEY, "")).strip()
+        if tavily_key:
+            validated_data[CONF_TAVILY_API_KEY] = tavily_key
+        else:
+            validated_data.pop(CONF_TAVILY_API_KEY, None)
 
         try:
             validated_data[CONF_URL] = normalise_base_url(str(validated_data[CONF_URL]))

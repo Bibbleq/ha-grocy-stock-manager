@@ -29,6 +29,7 @@ from .const import (
 if TYPE_CHECKING:
     from . import GrocyStockManagerConfigEntry
     from .journal import TransactionJournal
+    from .research import BarcodeResearcher
     from .voice import GrocyVoiceAliases
 
 type IdentificationStatus = Literal[
@@ -419,12 +420,14 @@ class ProductIdentificationManager:
         store: ProductIdentificationStore,
         journal: TransactionJournal,
         aliases: GrocyVoiceAliases,
+        researcher: BarcodeResearcher | None = None,
     ) -> None:
         self._hass = hass
         self._entry = entry
         self._store = store
         self._journal = journal
         self._aliases = aliases
+        self._researcher = researcher
         self._semaphore = asyncio.Semaphore(3)
         self._confirmation_locks: defaultdict[str, asyncio.Lock] = defaultdict(
             asyncio.Lock
@@ -816,17 +819,32 @@ class ProductIdentificationManager:
             async with self._semaphore, asyncio.timeout(
                 IDENTIFICATION_TIMEOUT_SECONDS
             ):
-                response = await self._hass.services.async_call(
-                    "conversation",
-                    "process",
-                    {
-                        "agent_id": current.agent_id,
-                        "text": _identification_prompt(current.barcode),
-                    },
-                    blocking=True,
-                    return_response=True,
-                )
-            candidate = _extract_candidate_name(response)
+                if current.agent_id.startswith("ai_task."):
+                    result = (
+                        await self._researcher.async_research(
+                            current.barcode,
+                            current.agent_id,
+                        )
+                        if self._researcher is not None
+                        else {"found": False}
+                    )
+                    candidate = (
+                        str(result.get("product_name", "")).strip()
+                        if result.get("found")
+                        else None
+                    )
+                else:
+                    response = await self._hass.services.async_call(
+                        "conversation",
+                        "process",
+                        {
+                            "agent_id": current.agent_id,
+                            "text": _identification_prompt(current.barcode),
+                        },
+                        blocking=True,
+                        return_response=True,
+                    )
+                    candidate = _extract_candidate_name(response)
             if candidate is None:
                 await self._finish_if_searching(
                     job_id,

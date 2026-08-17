@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
 from custom_components.grocy_stock_manager.api import GrocyInvalidAuthError
-from custom_components.grocy_stock_manager.const import DOMAIN
+from custom_components.grocy_stock_manager.const import CONF_TAVILY_API_KEY, DOMAIN
 
 USER_INPUT = {
     CONF_URL: "http://grocy.local:9192/api/",
@@ -64,3 +64,26 @@ async def test_user_flow_rejects_invalid_auth(hass: HomeAssistant) -> None:
 
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": "invalid_auth"}
+
+
+async def test_user_flow_stores_trimmed_optional_tavily_key(
+    hass: HomeAssistant,
+) -> None:
+    """The optional web-search credential is stored without surrounding spaces."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_USER},
+    )
+
+    with patch(
+        "custom_components.grocy_stock_manager.api.GrocyApiClient."
+        "async_get_system_info",
+        AsyncMock(return_value={"grocy_version": {"Version": "4.6.0"}}),
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {**USER_INPUT, CONF_TAVILY_API_KEY: "  tvly-test  "},
+        )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_TAVILY_API_KEY] == "tvly-test"

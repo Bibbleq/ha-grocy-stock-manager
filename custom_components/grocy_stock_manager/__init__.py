@@ -18,6 +18,7 @@ from .api import (
     GrocyInvalidAuthError,
 )
 from .catalogue import GrocyCatalogueManager
+from .const import CONF_TAVILY_API_KEY
 from .coordinator import GrocyInventoryCoordinator
 from .identification import (
     ProductIdentificationManager,
@@ -27,6 +28,7 @@ from .inventory import GrocyInventory
 from .journal import TransactionJournal
 from .merges import GrocyProductMergeManager
 from .pending import VoiceConfirmationStore
+from .research import BarcodeResearcher, TavilyBarcodeSearchClient
 from .resolver import GrocyProductResolver
 from .services import async_setup_services, async_unload_services
 from .transactions import GrocyTransactionManager
@@ -53,6 +55,7 @@ class GrocyStockManagerRuntimeData:
     pending_voice: VoiceConfirmationStore
     pending_identifications: ProductIdentificationStore
     identification: ProductIdentificationManager
+    researcher: BarcodeResearcher
     coordinator: GrocyInventoryCoordinator
     system_info: dict[str, Any]
 
@@ -92,12 +95,20 @@ async def async_setup_entry(
     pending_identifications = ProductIdentificationStore(hass)
     await pending_identifications.async_load()
     voice_aliases = GrocyVoiceAliases(client)
+    tavily_key = str(entry.data.get(CONF_TAVILY_API_KEY, "")).strip()
+    search_client = (
+        TavilyBarcodeSearchClient(async_get_clientsession(hass), tavily_key)
+        if tavily_key
+        else None
+    )
+    researcher = BarcodeResearcher(hass, search_client)
     identification = ProductIdentificationManager(
         hass,
         entry,
         pending_identifications,
         journal,
         voice_aliases,
+        researcher,
     )
     transactions = GrocyTransactionManager(client, resolver, journal)
     voice_resolver = GrocyVoiceResolver(client, resolver, voice_aliases)
@@ -129,6 +140,7 @@ async def async_setup_entry(
         pending_voice=pending_voice,
         pending_identifications=pending_identifications,
         identification=identification,
+        researcher=researcher,
         system_info=dict(system_info),
     )
     entry.runtime_data = runtime_data
