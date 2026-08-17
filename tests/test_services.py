@@ -50,6 +50,7 @@ from custom_components.grocy_stock_manager.models import (
 )
 from custom_components.grocy_stock_manager.resolver import GrocyProductResolver
 from custom_components.grocy_stock_manager.services import (
+    CONFIRM_PRODUCT_IDENTIFICATION_SCHEMA,
     _async_confirm_product_identification,
     _async_confirm_product_transaction,
     _async_mutate,
@@ -61,6 +62,18 @@ from custom_components.grocy_stock_manager.transactions import (
 )
 
 from .test_models import PRODUCT_DETAILS, STOCK_LOCATIONS
+
+
+def test_confirm_identification_schema_accepts_barcode_amount() -> None:
+    validated = CONFIRM_PRODUCT_IDENTIFICATION_SCHEMA(
+        {
+            "job_id": "job-1",
+            ATTR_PRODUCT_NAME: "Multipack test item",
+            ATTR_BARCODE_AMOUNT: "4",
+        }
+    )
+
+    assert validated[ATTR_BARCODE_AMOUNT] == Decimal("4")
 
 
 async def test_override_product_identification_forwards_catalogue_candidate() -> None:

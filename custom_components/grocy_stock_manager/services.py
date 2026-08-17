@@ -453,9 +453,6 @@ OVERRIDE_PRODUCT_IDENTIFICATION_SCHEMA = vol.Schema(
             _non_empty_string, vol.Length(max=255)
         ),
         vol.Optional(ATTR_PRODUCT_ALIASES, default=()): _product_aliases,
-        vol.Optional(
-            ATTR_BARCODE_AMOUNT, default=Decimal("1")
-        ): _positive_decimal,
     }
 )
 
@@ -469,6 +466,9 @@ CONFIRM_PRODUCT_IDENTIFICATION_SCHEMA = vol.Schema(
             _non_empty_string, vol.Length(max=255)
         ),
         vol.Optional(ATTR_PRODUCT_ALIASES, default=()): _product_aliases,
+        vol.Optional(
+            ATTR_BARCODE_AMOUNT, default=Decimal("1")
+        ): _positive_decimal,
     }
 )
 
