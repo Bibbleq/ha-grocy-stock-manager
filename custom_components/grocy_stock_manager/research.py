@@ -183,7 +183,9 @@ class BarcodeResearcher:
                 "generate_data",
                 {
                     "entity_id": ai_task_entity_id,
-                    "task_name": "Identify product from exact barcode using live web search",
+                    "task_name": (
+                        "Identify product from exact barcode using live web search"
+                    ),
                     "instructions": _research_prompt(
                         barcode,
                         evidence=evidence,
