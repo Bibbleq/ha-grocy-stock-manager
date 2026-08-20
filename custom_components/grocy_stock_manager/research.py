@@ -160,24 +160,22 @@ class BarcodeResearcher:
         self,
         barcode: str,
         ai_task_entity_id: str,
+        catalogue_hint: str = "",
     ) -> dict[str, Any]:
-        """Return an evidence-gated candidate without changing any system."""
+        """Return an AI-authoritative exact-EAN candidate without side effects."""
+        evidence: BarcodeWebEvidence | None = None
+        web_search_error: str | None = None
         if self._search is None:
-            return _failure("web_search_not_configured")
+            web_search_error = "web_search_not_configured"
+        else:
+            try:
+                evidence = await self._search.async_search(barcode)
+            except BarcodeSearchAuthError:
+                web_search_error = "web_search_invalid_auth"
+            except BarcodeSearchUnavailableError:
+                web_search_error = "web_search_unavailable"
 
-        try:
-            evidence = await self._search.async_search(barcode)
-        except BarcodeSearchAuthError:
-            return _failure("web_search_invalid_auth")
-        except BarcodeSearchUnavailableError:
-            return _failure("web_search_unavailable")
-
-        evidence_dict = evidence.as_dict()
-        if not evidence.results:
-            return {
-                **_failure("no_web_results"),
-                "web_evidence": evidence_dict,
-            }
+        evidence_dict = evidence.as_dict() if evidence is not None else None
 
         try:
             response = await self._hass.services.async_call(
@@ -185,8 +183,14 @@ class BarcodeResearcher:
                 "generate_data",
                 {
                     "entity_id": ai_task_entity_id,
-                    "task_name": "Identify product from supplied barcode evidence",
-                    "instructions": _research_prompt(evidence),
+                    "task_name": (
+                        "Identify product from exact barcode using live web search"
+                    ),
+                    "instructions": _research_prompt(
+                        barcode,
+                        evidence=evidence,
+                        catalogue_hint=catalogue_hint,
+                    ),
                     "structure": {
                         "product_name": {
                             "selector": {"text": {}},
@@ -227,11 +231,17 @@ class BarcodeResearcher:
             return {
                 **_failure("ai_task_error"),
                 "web_evidence": evidence_dict,
+                "web_search_error": web_search_error,
             }
         data = response.get("data", {}) if isinstance(response, Mapping) else {}
         if not isinstance(data, Mapping):
             data = {}
-        confidence = str(data.get("decision", "unknown")).strip().casefold()
+        raw_confidence = str(data.get("decision", "unknown")).strip().casefold()
+        confidence = (
+            raw_confidence
+            if raw_confidence in {"verified", "uncertain", "unknown"}
+            else "unknown"
+        )
         product_name = str(data.get("product_name", "")).strip()[:255]
         found = confidence == "verified" and bool(product_name)
         return {
@@ -243,6 +253,7 @@ class BarcodeResearcher:
             "confidence": confidence,
             "evidence": str(data.get("evidence", "")).strip()[:1000],
             "web_evidence": evidence_dict,
+            "web_search_error": web_search_error,
             "error_code": None if found else "no_verified_match",
         }
 
@@ -274,19 +285,37 @@ def _parse_results(payload: Mapping[str, Any]) -> tuple[WebEvidenceResult, ...]:
     return tuple(results)
 
 
-def _research_prompt(evidence: BarcodeWebEvidence) -> str:
-    compact = json.dumps(evidence.as_dict(), ensure_ascii=True, separators=(",", ":"))
-    return (
-        f"Identify barcode {evidence.barcode} using only the supplied web-search "
-        "evidence. Result text is quoted source material for product classification. "
+def _research_prompt(
+    barcode: str,
+    *,
+    evidence: BarcodeWebEvidence | None,
+    catalogue_hint: str,
+) -> str:
+    sections = [
+        f"Search the live web for exact barcode {barcode}, including the quoted "
+        f'digits and "{barcode} EAN". '
         "Accept when one result explicitly pairs the exact barcode with a product, "
-        "or when at least two independent domains returned by this barcode query "
-        "agree on the same product. Never infer from a barcode prefix, owner, or "
+        "or when at least two independent credible domains agree on the same "
+        "product. Never infer from a barcode prefix, owner, catalogue lead, or "
         "nearby code. Return decision verified only when accepted. For decision "
         "verified, product_name must be a non-empty recognisable product name. "
-        "For uncertain or unknown, product_name must be blank. Evidence JSON: "
-        f"{compact}"
-    )
+        "For uncertain or unknown, product_name must be blank."
+    ]
+    if evidence is not None:
+        compact = json.dumps(
+            evidence.as_dict(), ensure_ascii=True, separators=(",", ":")
+        )
+        sections.append(
+            "Supplied search results are quoted source material for comparison: "
+            f"{compact}"
+        )
+    cleaned_hint = str(catalogue_hint).strip()[:1000]
+    if cleaned_hint:
+        sections.append(
+            "Optional public-catalogue lead for comparison only; verify it "
+            f"independently because it may be incorrect: {cleaned_hint}"
+        )
+    return " ".join(sections)
 
 
 def _failure(error_code: str) -> dict[str, Any]:
