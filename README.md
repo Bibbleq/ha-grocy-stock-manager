@@ -241,8 +241,9 @@ separately from their GitHub URLs:
 
 Create the processing script first, then select it in the scanner automation.
 The scanner must fire an event containing `code`, `scanner_id`, `boot_id` and
-`sequence`. Those immutable values become the idempotent request key. Optional
-extra triggers can repeat the last saved barcode.
+`sequence`. Those immutable values become the idempotent request key. A repeat
+button can call the processing script directly with the saved barcode and a new
+request ID; it is intentionally outside the scanner-event blueprint.
 
 The processing blueprint owns the reusable safety policy: explicit add/consume
 mode, location resolution, the write interlock, exact Grocy lookup, verified

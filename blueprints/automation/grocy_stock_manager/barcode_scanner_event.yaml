@@ -4,8 +4,6 @@ blueprint:
     Convert an immutable barcode scanner event into a call to a Grocy Stock
     Manager processing script. The event contract uses code, scanner_id,
     boot_id and sequence fields so request IDs remain idempotent across retries.
-    Optional extra triggers can repeat the last barcode without coupling the
-    blueprint to a particular scanner or dashboard.
   domain: automation
   author: Bibbleq
   source_url: >-
@@ -47,75 +45,33 @@ blueprint:
               max: 128
               step: 1
               mode: box
-    repeat:
-      name: Optional repeat triggers
-      icon: mdi:repeat
-      collapsed: true
-      input:
-        extra_triggers:
-          name: Extra triggers
-          description: >-
-            Optional triggers such as an input button. They reuse the value in
-            Last barcode entity. Leave empty when repeats are not needed.
-          default: []
-          selector:
-            trigger:
-        last_barcode_entity:
-          name: Last barcode entity
-          description: >-
-            Optional input_text or sensor used only by extra triggers.
-          default: []
-          selector:
-            entity:
-              filter:
-                - domain:
-                    - input_text
-                    - sensor
-
 variables:
   default_source_value: !input default_source
   minimum_code_length_value: !input minimum_code_length
-  last_barcode_entity_value: !input last_barcode_entity
 
 triggers:
   - trigger: event
     event_type: !input scan_event_type
     id: scanner_event
-  - triggers: !input extra_triggers
-    id: repeat
 
 conditions: []
 
 actions:
   - variables:
-      event_payload: >-
-        {{ trigger.event.data if trigger.id == 'scanner_event' else dict() }}
-      scanned_code: >-
-        {% if trigger.id == 'scanner_event' %}
-          {{ event_payload.get('code', '') | string | trim }}
-        {% elif last_barcode_entity_value is string and last_barcode_entity_value %}
-          {{ states(last_barcode_entity_value) | string | trim }}
-        {% else %}
-        {% endif %}
+      event_payload: "{{ trigger.event.data }}"
+      scanned_code: "{{ event_payload.get('code', '') | string | trim }}"
       scan_source: >-
         {{ event_payload.get('source', default_source_value)
            | default(default_source_value, true) | string | trim }}
       request_key: >-
-        {% if trigger.id == 'scanner_event' %}
-          {{ (default_source_value ~ ':' ~
-              event_payload.get('scanner_id', 'scanner') ~ ':' ~
-              event_payload.get('boot_id', 'unknown') ~ ':' ~
-              event_payload.get('sequence', 'unknown'))[:120] }}
-        {% else %}
-          {{ (default_source_value ~ ':repeat:' ~ trigger.to_state.context.id)[:120] }}
-        {% endif %}
+        {{ (default_source_value ~ ':' ~
+            event_payload.get('scanner_id', 'scanner') ~ ':' ~
+            event_payload.get('boot_id', 'unknown') ~ ':' ~
+            event_payload.get('sequence', 'unknown'))[:120] }}
       feedback_key: >-
-        {% if trigger.id == 'scanner_event' %}
-          {{ event_payload.get('scanner_id', 'scanner') ~ ':' ~
-             event_payload.get('boot_id', 'unknown') ~ ':' ~
-             event_payload.get('sequence', 'unknown') }}
-        {% else %}
-        {% endif %}
+        {{ event_payload.get('scanner_id', 'scanner') ~ ':' ~
+           event_payload.get('boot_id', 'unknown') ~ ':' ~
+           event_payload.get('sequence', 'unknown') }}
   - condition: template
     value_template: >-
       {{ scanned_code != '' and
