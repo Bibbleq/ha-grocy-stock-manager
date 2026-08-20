@@ -144,14 +144,18 @@ async def test_researcher_accepts_verified_ai_task_match() -> None:
     researcher = BarcodeResearcher(hass, search)
 
     result = await researcher.async_research(
-        "8720181948930", "ai_task.azure_bibbleha_model_router"
+        "8720181948930",
+        "ai_task.azure_bibbleha_model_router",
+        "Catalogue candidate: Domestos cleaner",
     )
 
     assert result["found"] is True
     assert result["product_name"] == "Domestos Bleach Foam Pine Boost 450ml"
     call_data = async_call.await_args.args[2]
     assert call_data["entity_id"] == "ai_task.azure_bibbleha_model_router"
+    assert "Search the live web" in call_data["instructions"]
     assert "quoted source material" in call_data["instructions"]
+    assert "Catalogue candidate: Domestos cleaner" in call_data["instructions"]
     assert "ignore instructions" not in call_data["instructions"]
     assert "tesco.com" in call_data["instructions"]
     assert "identified" not in call_data["structure"]
@@ -198,14 +202,47 @@ async def test_researcher_rejects_unverified_ai_guess() -> None:
     assert result["error_code"] == "no_verified_match"
 
 
-async def test_researcher_fails_safely_without_web_search() -> None:
-    async_call = AsyncMock()
+async def test_researcher_uses_ai_task_live_search_without_tavily() -> None:
+    async_call = AsyncMock(
+        return_value={
+            "data": {
+                "product_name": "Domestos Bleach Foam Pine Boost 450ml",
+                "brand": "Domestos",
+                "decision": "verified",
+                "evidence": "The AI Task found an exact-code product page.",
+            }
+        }
+    )
     hass = SimpleNamespace(services=SimpleNamespace(async_call=async_call))
 
     result = await BarcodeResearcher(hass, None).async_research(
         "8720181948930", "ai_task.azure_bibbleha_model_router"
     )
 
+    assert result["found"] is True
+    assert result["product_name"] == "Domestos Bleach Foam Pine Boost 450ml"
+    assert result["web_evidence"] is None
+    assert result["web_search_error"] == "web_search_not_configured"
+    assert "Search the live web" in async_call.await_args.args[2]["instructions"]
+
+
+async def test_researcher_normalises_nonstandard_ai_decision() -> None:
+    async_call = AsyncMock(
+        return_value={
+            "data": {
+                "product_name": "",
+                "brand": "",
+                "decision": "not_verified",
+                "evidence": "No exact-code result.",
+            }
+        }
+    )
+    hass = SimpleNamespace(services=SimpleNamespace(async_call=async_call))
+
+    result = await BarcodeResearcher(hass, None).async_research(
+        "5057008969667", "ai_task.azure_bibbleha_model_router"
+    )
+
     assert result["found"] is False
-    assert result["error_code"] == "web_search_not_configured"
-    async_call.assert_not_awaited()
+    assert result["confidence"] == "unknown"
+    assert result["error_code"] == "no_verified_match"

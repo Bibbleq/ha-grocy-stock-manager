@@ -53,6 +53,7 @@ ATTR_ORIGINAL_REQUEST_ID: Final = "original_request_id"
 ATTR_NOTE: Final = "note"
 ATTR_AGENT_ID: Final = "agent_id"
 ATTR_AI_TASK_ENTITY_ID: Final = "ai_task_entity_id"
+ATTR_CATALOGUE_HINT: Final = "catalogue_hint"
 ATTR_JOB_ID: Final = "job_id"
 ATTR_PRODUCT_ALIASES: Final = "product_aliases"
 

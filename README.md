@@ -81,9 +81,10 @@ The current build provides:
 - Automated tests, Ruff linting, hassfest, and HACS validation.
 
 Unknown-barcode enrichment is a separate asynchronous subsystem. Grocy is
-always checked first; only an unknown barcode enters the deterministic provider
-cascade. If those providers fail, `start_product_identification` durably stores
-the scanner intent and returns before AI starts. The Status sensor and
+always checked first; only an unknown barcode enters external research. Public
+catalogues provide comparison leads, while a verified AI Task verdict is the
+sole external acceptance gate. `start_product_identification` durably stores
+the scanner intent before research and returns without holding the scanner. The Status sensor and
 `grocy_stock_manager_identification_updated` event expose searching, suggested,
 manual-required, confirming, failed, completed and rejected states. A candidate
 must still be confirmed before `confirm_product_identification` can create or
@@ -91,31 +92,33 @@ map it and apply the immutable captured intent.
 
 ## Web-grounded barcode research
 
-For products missed by Grocy and the deterministic lookup providers, the
-integration can research the exact barcode before asking an AI Task to name it.
-Create a Tavily API key, then open **Settings > Devices & services > Grocy Stock
-Manager > Reconfigure** and enter it in **Tavily API key**. The credential is
-stored in the Home Assistant config entry, redacted from diagnostics, and never
-returned by an action.
+For products missed by Grocy, the integration can ask a web-search-capable AI
+Task to research the exact barcode. A deterministic public-catalogue result can
+be supplied as a comparison lead, but it is never accepted by itself. The AI
+Task must independently return a verified exact-EAN match and a non-empty
+product name. Prefix-only, owner-only, nearby-code, uncertain, and malformed
+answers are rejected.
 
-`grocy_stock_manager.research_barcode` first tries a quoted exact-code query. If
-the search index returns nothing, it retries with the same barcode digits in a
-broader query. Only a bounded evidence packet is supplied to the AI Task. The
-result is accepted only when one result explicitly pairs the exact barcode and
-product, or two independent domains agree. Prefix-only and nearby-code guesses
-are rejected.
+Tavily is optional supporting evidence. To enable it, create a Tavily API key,
+then open **Settings > Devices & services > Grocy Stock Manager > Reconfigure**
+and enter it in **Tavily API key**. The credential is stored in the Home
+Assistant config entry, redacted from diagnostics, and never returned by an
+action. When configured, a quoted exact-code search and bounded result packet
+are supplied to the AI Task alongside its own live search.
 
 ```yaml
 action: grocy_stock_manager.research_barcode
 data:
   barcode: "8720181948930"
   ai_task_entity_id: ai_task.azure_bibbleha_model_router
+  catalogue_hint: "Public catalogue candidate: Domestos cleaner"
 response_variable: barcode_research
 ```
 
 This action is read-only. It returns a verified candidate or a stable failure
-code such as `no_web_results`, `no_verified_match`, or
-`web_search_not_configured`; it never creates a Grocy product or changes stock.
+code such as `no_verified_match` or `ai_task_error`; it never creates a Grocy
+product or changes stock. `web_search_error` separately reports whether optional
+Tavily evidence was unavailable without preventing the AI Task's own search.
 
 ## Voice product names
 
@@ -293,8 +296,9 @@ After Grocy and fast deterministic providers return no match, call
 `grocy_stock_manager.start_product_identification`. It stores the complete
 intent before returning `accepted: true`; the configured conversation or AI
 Task lookup then runs in a bounded background task and cannot hold the scanner
-queue open. When an `ai_task.*` entity is supplied and Tavily is configured,
-the background task uses the same evidence-gated research path described above.
+queue open. When an `ai_task.*` entity is supplied, the background task uses the
+same AI-authoritative exact-EAN research path described above; configured Tavily
+results remain optional supporting evidence.
 
 ```yaml
 action: grocy_stock_manager.start_product_identification

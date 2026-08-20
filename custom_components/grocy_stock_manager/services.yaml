@@ -29,10 +29,10 @@ lookup:
 research_barcode:
   name: Research an unknown barcode
   description: >-
-    Search configured web evidence and ask a Home Assistant AI Task to identify
-    the product. Strict quoted search is attempted first, followed by a broader
-    exact-digit query when required. The response is evidence-gated and this
-    action never changes Grocy stock or catalogue data.
+    Ask a Home Assistant AI Task with live web search to identify the product.
+    Configured Tavily evidence and an optional public-catalogue lead are supplied
+    for comparison, but only the AI Task's independently verified exact-EAN
+    verdict is accepted. This action never changes Grocy stock or catalogue data.
   fields:
     barcode:
       name: Barcode
@@ -45,6 +45,14 @@ research_barcode:
       selector:
         entity:
           domain: ai_task
+    catalogue_hint:
+      name: Catalogue lead
+      description: >-
+        Optional public-catalogue name or brand for comparison. It may be wrong
+        and is never accepted without independent AI verification.
+      selector:
+        text:
+          multiline: true
 
 confirm_product:
   name: Confirm Grocy product

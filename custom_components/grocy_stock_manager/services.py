@@ -40,6 +40,7 @@ from .const import (
     ATTR_BARCODE_AMOUNT,
     ATTR_CANDIDATE_LIMIT,
     ATTR_CANONICAL_NAME,
+    ATTR_CATALOGUE_HINT,
     ATTR_CONFIRMATION_TOKEN,
     ATTR_DRY_RUN,
     ATTR_JOB_ID,
@@ -150,6 +151,9 @@ RESEARCH_BARCODE_SCHEMA = vol.Schema(
         ),
         vol.Required(ATTR_AI_TASK_ENTITY_ID): vol.All(
             _non_empty_string, vol.Length(max=255)
+        ),
+        vol.Optional(ATTR_CATALOGUE_HINT, default=""): vol.All(
+            str, vol.Length(max=1000)
         ),
     }
 )
@@ -1705,6 +1709,7 @@ def async_setup_services(
         return await entry.runtime_data.researcher.async_research(
             call.data[ATTR_BARCODE],
             call.data[ATTR_AI_TASK_ENTITY_ID],
+            call.data[ATTR_CATALOGUE_HINT],
         )
 
     async def async_add(call: ServiceCall) -> ServiceResponse:
