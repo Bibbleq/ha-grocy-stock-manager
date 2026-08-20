@@ -36,6 +36,12 @@ def test_scanner_automation_blueprint_has_portable_event_contract() -> None:
     assert scanner_inputs["processor_script"]["selector"]["entity"]
     assert blueprint["mode"] == "queued"
 
+    raw = (
+        REPOSITORY_ROOT
+        / "blueprints/automation/grocy_stock_manager/barcode_scanner_event.yaml"
+    ).read_text(encoding="utf-8")
+    assert "scanned_code | string | length" in raw
+
 
 def test_processing_blueprint_delegates_household_ui_to_callback() -> None:
     blueprint = _load(
