@@ -74,8 +74,9 @@ actions:
            event_payload.get('sequence', 'unknown') }}
   - condition: template
     value_template: >-
-      {{ scanned_code != '' and
-         (scanned_code | length) >= (minimum_code_length_value | int(1)) }}
+      {{ (scanned_code | string) != '' and
+         (scanned_code | string | length) >=
+         (minimum_code_length_value | int(1)) }}
   - action: !input processor_script
     data:
       barcode: "{{ scanned_code }}"

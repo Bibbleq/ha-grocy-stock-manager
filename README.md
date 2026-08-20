@@ -266,6 +266,10 @@ and optional `product_aliases`. In that form the durable review is created in
 `agent_id` remains mandatory and the existing background AI behaviour is
 unchanged.
 
+Version 0.14.1 makes the scanner automation's length guard explicitly coerce
+numeric-only EAN values to text, matching Home Assistant's native template
+typing and preventing valid numeric barcodes from being rejected early.
+
 ## Upgrading to 0.13
 
 Version 0.13 makes the reusable integration boundary explicit. The
