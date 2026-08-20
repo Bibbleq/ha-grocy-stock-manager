@@ -1,4 +1,4 @@
-"""Fail-closed natural-language product resolution for garage stock."""
+"""Fail-closed natural-language product resolution for Grocy stock."""
 
 from __future__ import annotations
 

@@ -40,7 +40,6 @@ from .const import (
     ATTR_BARCODE_AMOUNT,
     ATTR_CANDIDATE_LIMIT,
     ATTR_CANONICAL_NAME,
-    ATTR_CATALOGUE_HINT,
     ATTR_CONFIRMATION_TOKEN,
     ATTR_DRY_RUN,
     ATTR_JOB_ID,
@@ -60,7 +59,6 @@ from .const import (
     ATTR_QUANTITY_UNIT_NAME,
     ATTR_REQUEST_ID,
     ATTR_SOURCE,
-    DEFAULT_IDENTIFICATION_AGENT,
     DOMAIN,
     SERVICE_ACKNOWLEDGE_RECONCILIATION,
     SERVICE_ADD,
@@ -151,9 +149,6 @@ RESEARCH_BARCODE_SCHEMA = vol.Schema(
         ),
         vol.Required(ATTR_AI_TASK_ENTITY_ID): vol.All(
             _non_empty_string, vol.Length(max=255)
-        ),
-        vol.Optional(ATTR_CATALOGUE_HINT, default=""): vol.All(
-            str, vol.Length(max=1000)
         ),
     }
 )
@@ -294,7 +289,7 @@ CONFIRM_PRODUCT_TRANSACTION_SCHEMA = vol.All(
             vol.Required(ATTR_REQUEST_ID): vol.All(
                 _non_empty_string, vol.Length(max=128)
             ),
-            vol.Optional(ATTR_SOURCE, default="home_assistant_confirm"): vol.All(
+            vol.Optional(ATTR_SOURCE, default="scanner"): vol.All(
                 _non_empty_string, vol.Length(max=64)
             ),
         }
@@ -439,12 +434,12 @@ START_PRODUCT_IDENTIFICATION_SCHEMA = vol.All(
             vol.Required(ATTR_REQUEST_ID): vol.All(
                 _non_empty_string, vol.Length(max=128)
             ),
-            vol.Optional(ATTR_SOURCE, default="garage_scanner"): vol.All(
+            vol.Optional(ATTR_SOURCE, default="scanner"): vol.All(
                 _non_empty_string, vol.Length(max=64)
             ),
-            vol.Optional(
-                ATTR_AGENT_ID, default=DEFAULT_IDENTIFICATION_AGENT
-            ): vol.All(_non_empty_string, vol.Length(max=255)),
+            vol.Required(ATTR_AGENT_ID): vol.All(
+                _non_empty_string, vol.Length(max=255)
+            ),
         }
     ),
     _at_most_one_location,
@@ -1709,7 +1704,6 @@ def async_setup_services(
         return await entry.runtime_data.researcher.async_research(
             call.data[ATTR_BARCODE],
             call.data[ATTR_AI_TASK_ENTITY_ID],
-            call.data[ATTR_CATALOGUE_HINT],
         )
 
     async def async_add(call: ServiceCall) -> ServiceResponse:

@@ -145,17 +145,15 @@ async def test_researcher_accepts_verified_ai_task_match() -> None:
 
     result = await researcher.async_research(
         "8720181948930",
-        "ai_task.azure_bibbleha_model_router",
-        "Catalogue candidate: Domestos cleaner",
+        "ai_task.web_search_agent",
     )
 
     assert result["found"] is True
     assert result["product_name"] == "Domestos Bleach Foam Pine Boost 450ml"
     call_data = async_call.await_args.args[2]
-    assert call_data["entity_id"] == "ai_task.azure_bibbleha_model_router"
+    assert call_data["entity_id"] == "ai_task.web_search_agent"
     assert "Search the live web" in call_data["instructions"]
     assert "quoted source material" in call_data["instructions"]
-    assert "Catalogue candidate: Domestos cleaner" in call_data["instructions"]
     assert "ignore instructions" not in call_data["instructions"]
     assert "tesco.com" in call_data["instructions"]
     assert "identified" not in call_data["structure"]
@@ -194,7 +192,7 @@ async def test_researcher_rejects_unverified_ai_guess() -> None:
     hass = SimpleNamespace(services=SimpleNamespace(async_call=async_call))
 
     result = await BarcodeResearcher(hass, search).async_research(
-        "12345670", "ai_task.azure_bibbleha_model_router"
+        "12345670", "ai_task.web_search_agent"
     )
 
     assert result["found"] is False
@@ -216,7 +214,7 @@ async def test_researcher_uses_ai_task_live_search_without_tavily() -> None:
     hass = SimpleNamespace(services=SimpleNamespace(async_call=async_call))
 
     result = await BarcodeResearcher(hass, None).async_research(
-        "8720181948930", "ai_task.azure_bibbleha_model_router"
+        "8720181948930", "ai_task.web_search_agent"
     )
 
     assert result["found"] is True
@@ -240,7 +238,7 @@ async def test_researcher_normalises_nonstandard_ai_decision() -> None:
     hass = SimpleNamespace(services=SimpleNamespace(async_call=async_call))
 
     result = await BarcodeResearcher(hass, None).async_research(
-        "5057008969667", "ai_task.azure_bibbleha_model_router"
+        "5057008969667", "ai_task.web_search_agent"
     )
 
     assert result["found"] is False

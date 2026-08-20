@@ -53,7 +53,6 @@ ATTR_ORIGINAL_REQUEST_ID: Final = "original_request_id"
 ATTR_NOTE: Final = "note"
 ATTR_AGENT_ID: Final = "agent_id"
 ATTR_AI_TASK_ENTITY_ID: Final = "ai_task_entity_id"
-ATTR_CATALOGUE_HINT: Final = "catalogue_hint"
 ATTR_JOB_ID: Final = "job_id"
 ATTR_PRODUCT_ALIASES: Final = "product_aliases"
 
@@ -66,7 +65,7 @@ VOICE_CONFIRMATION_TTL_SECONDS: Final = 300
 VOICE_STORAGE_KEY: Final = f"{DOMAIN}.voice_confirmations"
 VOICE_STORAGE_VERSION: Final = 1
 
-DEFAULT_IDENTIFICATION_AGENT: Final = "conversation.openai_conversation"
+DEFAULT_IDENTIFICATION_AGENT: Final = "conversation.home_assistant"
 EVENT_IDENTIFICATION_UPDATED: Final = f"{DOMAIN}_identification_updated"
 IDENTIFICATION_TIMEOUT_SECONDS: Final = 45
 IDENTIFICATION_STORAGE_KEY: Final = f"{DOMAIN}.product_identifications"

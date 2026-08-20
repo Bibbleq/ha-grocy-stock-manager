@@ -9,5 +9,5 @@
   "issue_tracker": "https://github.com/Bibbleq/ha-grocy-stock-manager/issues",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.12.3"
+  "version": "0.13.0"
 }
