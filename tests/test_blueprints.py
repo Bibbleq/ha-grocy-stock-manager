@@ -74,3 +74,13 @@ def test_processing_blueprint_orders_catalogue_before_ai_job() -> None:
     candidate_job = raw.index("Queue trusted deterministic candidate without AI")
     ai_job = raw.index("agent_id: !input identification_agent")
     assert catalogue < candidate_job < ai_job
+
+
+def test_processing_blueprint_stringifies_native_numeric_eans() -> None:
+    raw = (
+        REPOSITORY_ROOT
+        / "blueprints/script/grocy_stock_manager/process_barcode.yaml"
+    ).read_text(encoding="utf-8")
+
+    assert "(scanned_code | string).startswith" in raw
+    assert "scanned_code.startswith" not in raw
