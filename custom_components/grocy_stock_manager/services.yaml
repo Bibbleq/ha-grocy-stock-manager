@@ -503,7 +503,8 @@ start_product_identification:
   description: >-
     Persist the complete captured scanner intent, return immediately and ask a
     Home Assistant conversation agent or AI Task to identify the barcode in
-    the background. An AI Task uses configured evidence-gated web research.
+    the background, or persist a trusted deterministic catalogue candidate
+    without starting AI. An AI Task uses configured evidence-gated web research.
     Progress and results are emitted through
     grocy_stock_manager_identification_updated and exposed on the Status
     sensor. This action never changes Grocy stock.
@@ -562,12 +563,28 @@ start_product_identification:
         text:
     agent_id:
       name: Conversation agent or AI Task ID
-      required: true
+      required: false
       description: >-
         Use an ai_task entity for evidence-gated web research, or a conversation
-        entity for the legacy direct prompt path.
+        entity for the legacy direct prompt path. Required unless a trusted
+        product name is supplied.
       selector:
         text:
+    product_name:
+      name: Trusted catalogue product name
+      required: false
+      description: >-
+        A deterministic exact-barcode catalogue result. When supplied, the job
+        is queued ready for human confirmation and AI is not started.
+      selector:
+        text:
+    product_aliases:
+      name: Suggested voice aliases
+      required: false
+      description: Optional aliases accompanying the trusted product name.
+      selector:
+        text:
+          multiline: true
 
 confirm_product_identification:
   name: Confirm queued product identification

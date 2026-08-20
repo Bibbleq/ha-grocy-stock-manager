@@ -1,0 +1,643 @@
+blueprint:
+  name: Grocy Stock Manager - process barcode
+  description: >-
+    Process one barcode through exact Grocy lookup, verified add or consume,
+    durable unknown-product review, deterministic catalogue enrichment and an
+    AI fallback. Grocy always wins; a deterministic exact-barcode result is
+    queued without starting AI. Household UI, notifications and scanner display
+    feedback are supplied through one optional callback action.
+  domain: script
+  author: Bibbleq
+  source_url: >-
+    https://github.com/Bibbleq/ha-grocy-stock-manager/blob/main/blueprints/script/grocy_stock_manager/process_barcode.yaml
+  homeassistant:
+    min_version: 2024.10.0
+  input:
+    state_helpers:
+      name: Workflow state
+      icon: mdi:tune-variant
+      input:
+        mode_entity:
+          name: Operation selector
+          selector:
+            entity:
+              filter:
+                - domain: input_select
+        quantity_entity:
+          name: Quantity helper
+          selector:
+            entity:
+              filter:
+                - domain: input_number
+        shelf_entity:
+          name: Shelf selector
+          selector:
+            entity:
+              filter:
+                - domain: input_select
+        writes_enabled_entity:
+          name: Write interlock
+          selector:
+            entity:
+              filter:
+                - domain: input_boolean
+        status_entity:
+          name: Grocy Stock Manager status
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+    identification:
+      name: Unknown-product identification
+      icon: mdi:text-search
+      input:
+        deterministic_lookup_script:
+          name: Deterministic lookup script
+          description: >-
+            A response-returning script that accepts barcode and returns found,
+            name and optional brand fields. It must not call the AI fallback;
+            this blueprint does that only when the deterministic lookup misses.
+          selector:
+            entity:
+              filter:
+                - domain: script
+        identification_agent:
+          name: AI fallback entity
+          description: Web-search-capable ai_task or conversation entity.
+          selector:
+            entity:
+              filter:
+                - domain:
+                    - ai_task
+                    - conversation
+        quantity_unit_name:
+          name: New-product quantity unit
+          default: Pack
+          selector:
+            text:
+    code_mapping:
+      name: Scanner control codes and locations
+      icon: mdi:barcode
+      collapsed: true
+      input:
+        add_code:
+          name: Add mode code
+          default: MODE-ADD
+          selector:
+            text:
+        consume_code:
+          name: Consume mode code
+          default: MODE-CONSUME
+          selector:
+            text:
+        add_mode_option:
+          name: Add option in operation selector
+          default: Add
+          selector:
+            text:
+        consume_mode_option:
+          name: Consume option in operation selector
+          default: Consume
+          selector:
+            text:
+        shelf_code_prefix:
+          name: Shelf barcode prefix
+          default: SHELF-
+          selector:
+            text:
+        other_shelf_code:
+          name: Miscellaneous shelf barcode
+          default: SHELF-OTHER
+          selector:
+            text:
+        other_shelf_option:
+          name: Miscellaneous shelf selector option
+          default: Other
+          selector:
+            text:
+        unset_shelf_option:
+          name: Automatic shelf selector option
+          default: Not set
+          selector:
+            text:
+        location_prefix:
+          name: Grocy location prefix
+          default: ""
+          selector:
+            text:
+        other_location_name:
+          name: Miscellaneous Grocy location
+          default: Miscellaneous
+          selector:
+            text:
+    callbacks:
+      name: Optional household callbacks
+      icon: mdi:call-split
+      collapsed: true
+      input:
+        on_update:
+          name: Status/UI callback
+          description: >-
+            Runs whenever the workflow has user-visible news. It can use
+            update_kind, result_message, feedback_outcome, feedback_message,
+            device_key, scanned_code, operation, amount, location,
+            product_name, transaction, queue_position and queue_count.
+          default: []
+          selector:
+            action:
+
+variables:
+  mode_entity_value: !input mode_entity
+  quantity_entity_value: !input quantity_entity
+  shelf_entity_value: !input shelf_entity
+  writes_enabled_entity_value: !input writes_enabled_entity
+  status_entity_value: !input status_entity
+  identification_agent_value: !input identification_agent
+  quantity_unit_name_value: !input quantity_unit_name
+  add_code_value: !input add_code
+  consume_code_value: !input consume_code
+  add_mode_option_value: !input add_mode_option
+  consume_mode_option_value: !input consume_mode_option
+  shelf_code_prefix_value: !input shelf_code_prefix
+  other_shelf_code_value: !input other_shelf_code
+  other_shelf_option_value: !input other_shelf_option
+  unset_shelf_option_value: !input unset_shelf_option
+  location_prefix_value: !input location_prefix
+  other_location_name_value: !input other_location_name
+
+fields:
+  barcode:
+    name: Barcode
+    description: Exact scanned barcode or configured control code.
+    required: true
+    selector:
+      text:
+  source:
+    name: Source
+    default: scanner
+    selector:
+      text:
+  request_id:
+    name: Request ID
+    description: Stable unique ID for this physical user action.
+    selector:
+      text:
+  feedback_key:
+    name: Device feedback key
+    description: Optional scanner boot/sequence key for display feedback.
+    selector:
+      text:
+
+sequence:
+  - variables:
+      scanned_code: "{{ barcode | string | trim }}"
+      scan_source: "{{ source | default('scanner', true) | string | trim }}"
+      request_key: >-
+        {{ (request_id | default('scanner-manual-' ~
+           now().strftime('%Y%m%d%H%M%S%f'), true) | string | trim)[:120] }}
+      device_key: "{{ feedback_key | default('', true) | string | trim }}"
+      shelf_options: "{{ state_attr(shelf_entity_value, 'options') or [] }}"
+      shelf_token: >-
+        {{ scanned_code[(shelf_code_prefix_value | length):]
+           if scanned_code.startswith(shelf_code_prefix_value) else '' }}
+      requested_shelf: >-
+        {{ other_shelf_option_value
+           if scanned_code == other_shelf_code_value else shelf_token }}
+  - choose:
+      - alias: Set add mode
+        conditions:
+          - condition: template
+            value_template: "{{ scanned_code == add_code_value }}"
+        sequence:
+          - action: input_select.select_option
+            target:
+              entity_id: !input mode_entity
+            data:
+              option: "{{ add_mode_option_value }}"
+          - variables:
+              update_kind: mode_changed
+              result_message: "Add mode selected. Choose a shelf or use automatic location."
+              feedback_outcome: READY
+              feedback_message: Add mode
+          - if:
+              - condition: template
+                value_template: "{{ true }}"
+            then: !input on_update
+          - stop: Add mode control code handled
+      - alias: Set consume mode
+        conditions:
+          - condition: template
+            value_template: "{{ scanned_code == consume_code_value }}"
+        sequence:
+          - action: input_select.select_option
+            target:
+              entity_id: !input mode_entity
+            data:
+              option: "{{ consume_mode_option_value }}"
+          - variables:
+              update_kind: mode_changed
+              result_message: "Consume mode selected. Choose a shelf or use automatic location."
+              feedback_outcome: READY
+              feedback_message: Consume mode
+          - if:
+              - condition: template
+                value_template: "{{ true }}"
+            then: !input on_update
+          - stop: Consume mode control code handled
+      - alias: Set shelf
+        conditions:
+          - condition: template
+            value_template: >-
+              {{ scanned_code.startswith(shelf_code_prefix_value) and
+                 requested_shelf in shelf_options }}
+        sequence:
+          - action: input_select.select_option
+            target:
+              entity_id: !input shelf_entity
+            data:
+              option: "{{ requested_shelf }}"
+          - variables:
+              update_kind: shelf_changed
+              result_message: "Shelf {{ requested_shelf }} selected. Ready to scan."
+              feedback_outcome: READY
+              feedback_message: "Shelf {{ requested_shelf }}"
+          - if:
+              - condition: template
+                value_template: "{{ true }}"
+            then: !input on_update
+          - stop: Shelf control code handled
+      - alias: Reject malformed control code
+        conditions:
+          - condition: template
+            value_template: >-
+              {{ scanned_code.startswith('MODE-') or
+                 scanned_code.startswith(shelf_code_prefix_value) }}
+        sequence:
+          - variables:
+              update_kind: rejected
+              result_message: "Unknown scanner control code {{ scanned_code }}. No stock changed."
+              feedback_outcome: REJECTED
+              feedback_message: Unknown control code
+          - if:
+              - condition: template
+                value_template: "{{ true }}"
+            then: !input on_update
+          - stop: Malformed control code rejected
+    default: []
+  - variables:
+      captured_mode: "{{ states(mode_entity_value) }}"
+      operation: >-
+        {{ 'consume' if is_state(mode_entity_value, consume_mode_option_value)
+           else 'add' }}
+      amount: "{{ states(quantity_entity_value) | int(1) }}"
+      captured_shelf: "{{ states(shelf_entity_value) }}"
+      location: >-
+        {% set shelf = states(shelf_entity_value) %}
+        {% if shelf == other_shelf_option_value %}
+          {{ other_location_name_value }}
+        {% elif shelf == unset_shelf_option_value %}
+        {% else %}
+          {{ location_prefix_value ~ shelf }}
+        {% endif %}
+  - choose:
+      - alias: Require an explicit operation
+        conditions:
+          - condition: template
+            value_template: >-
+              {{ captured_mode not in
+                 [add_mode_option_value, consume_mode_option_value] }}
+        sequence:
+          - variables:
+              update_kind: rejected
+              result_message: "Choose add or consume before scanning. No stock changed."
+              feedback_outcome: REJECTED
+              feedback_message: Choose add or consume first
+          - if:
+              - condition: template
+                value_template: "{{ true }}"
+            then: !input on_update
+          - stop: Explicit operation required
+      - alias: Writes or Grocy health is locked
+        conditions:
+          - condition: template
+            value_template: >-
+              {{ not is_state(writes_enabled_entity_value, 'on') or
+                 not is_state(status_entity_value, 'ready') }}
+        sequence:
+          - variables:
+              update_kind: locked
+              result_message: "Inventory is paused for safety. No stock changed."
+              feedback_outcome: LOCKED
+              feedback_message: Inventory paused - check Home Assistant
+          - if:
+              - condition: template
+                value_template: "{{ true }}"
+            then: !input on_update
+          - stop: Inventory writes are locked
+    default: []
+  - variables:
+      update_kind: lookup_started
+      result_message: "Looking up {{ scanned_code }}…"
+      feedback_outcome: THINKING
+      feedback_message: Looking up item
+  - if:
+      - condition: template
+        value_template: "{{ true }}"
+    then: !input on_update
+  - action: grocy_stock_manager.lookup
+    data:
+      barcode: "{{ scanned_code }}"
+    response_variable: lookup
+    continue_on_error: true
+  - choose:
+      - alias: Known Grocy product
+        conditions:
+          - condition: template
+            value_template: >-
+              {{ lookup is defined and lookup is mapping and
+                 lookup.get('success', false) }}
+        sequence:
+          - variables:
+              product_name: >-
+                {{ lookup.get('product_name',
+                   lookup.get('product', {}).get('name', 'item')) }}
+              barcode_amount: >-
+                {{ lookup.get('matched_barcode', {}).get('amount', 1)
+                   | float(1) }}
+              effective_amount: >-
+                {{ (amount | float(1)) * (barcode_amount | float(1)) }}
+          - choose:
+              - alias: Add known product
+                conditions:
+                  - condition: template
+                    value_template: "{{ operation == 'add' }}"
+                sequence:
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ location != '' }}"
+                        sequence:
+                          - action: grocy_stock_manager.add
+                            data:
+                              barcode: "{{ scanned_code }}"
+                              amount: "{{ effective_amount }}"
+                              location_name: "{{ location }}"
+                              request_id: "{{ request_key ~ ':stock' }}"
+                              source: "{{ scan_source }}"
+                            response_variable: transaction
+                            continue_on_error: true
+                    default:
+                      - action: grocy_stock_manager.add
+                        data:
+                          barcode: "{{ scanned_code }}"
+                          amount: "{{ effective_amount }}"
+                          request_id: "{{ request_key ~ ':stock' }}"
+                          source: "{{ scan_source }}"
+                        response_variable: transaction
+                        continue_on_error: true
+            default:
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ location != '' }}"
+                    sequence:
+                      - action: grocy_stock_manager.consume
+                        data:
+                          barcode: "{{ scanned_code }}"
+                          amount: "{{ effective_amount }}"
+                          location_name: "{{ location }}"
+                          request_id: "{{ request_key ~ ':stock' }}"
+                          source: "{{ scan_source }}"
+                        response_variable: transaction
+                        continue_on_error: true
+                default:
+                  - action: grocy_stock_manager.consume
+                    data:
+                      barcode: "{{ scanned_code }}"
+                      amount: "{{ effective_amount }}"
+                      request_id: "{{ request_key ~ ':stock' }}"
+                      source: "{{ scan_source }}"
+                    response_variable: transaction
+                    continue_on_error: true
+          - choose:
+              - alias: Verified transaction committed
+                conditions:
+                  - condition: template
+                    value_template: >-
+                      {{ transaction is defined and transaction is mapping and
+                         transaction.get('success', false) and
+                         transaction.get('outcome') == 'committed' }}
+                sequence:
+                  - variables:
+                      update_kind: committed
+                      result_message: >-
+                        {% set a = transaction.get('amount', 0) | float(0) %}
+                        {% set before = transaction.get('stock_before', 0) | float(0) %}
+                        {% set after = transaction.get('stock_after', 0) | float(0) %}
+                        {% set ad = a | int if a == (a | int) else a %}
+                        {% set bd = before | int if before == (before | int) else before %}
+                        {% set sd = after | int if after == (after | int) else after %}
+                        ✓ {{ 'Added' if transaction.get('operation') == 'add' else 'Used' }}
+                        {{ ad }} {{ transaction.get('product_name') }} —
+                        {{ bd }} → {{ sd }} at {{ transaction.get('location_name') }}.
+                      feedback_outcome: COMMITTED
+                      feedback_message: >-
+                        {{ ('Added ' if transaction.get('operation') == 'add'
+                           else 'Used ') ~ transaction.get('product_name', 'item') }}
+              - alias: Expected safe rejection
+                conditions:
+                  - condition: template
+                    value_template: >-
+                      {{ transaction is defined and transaction is mapping and
+                         transaction.get('outcome') == 'rejected' and
+                         not transaction.get('stock_changed', false) }}
+                sequence:
+                  - variables:
+                      needs_shelf: >-
+                        {{ location == '' and transaction.get('error_code', '') in
+                           ['location_not_found', 'location_ambiguous',
+                            'location_required'] }}
+                      update_kind: >-
+                        {{ 'shelf_required' if needs_shelf else 'rejected' }}
+                      result_message: >-
+                        {% if needs_shelf %}
+                          Automatic location needs a shelf for {{ product_name }}.
+                          Choose one; no stock changed.
+                        {% else %}
+                          No stock changed: {{ transaction.get('message',
+                          transaction.get('error_message',
+                          transaction.get('error_code', 'request rejected safely'))) }}
+                        {% endif %}
+                      feedback_outcome: >-
+                        {{ 'REVIEW' if needs_shelf else 'REJECTED' }}
+                      feedback_message: >-
+                        {{ 'Choose shelf on tablet' if needs_shelf else
+                           transaction.get('error_code', 'No stock changed') }}
+            default:
+              - action: input_boolean.turn_off
+                target:
+                  entity_id: !input writes_enabled_entity
+              - variables:
+                  update_kind: locked
+                  result_message: >-
+                    Stock outcome could not be verified. Writes are locked;
+                    reconcile Grocy before retrying.
+                  feedback_outcome: LOCKED
+                  feedback_message: Check Grocy - outcome unknown
+          - if:
+              - condition: template
+                value_template: "{{ true }}"
+            then: !input on_update
+    default:
+      - choose:
+          - alias: Unknown add requires an explicit shelf
+            conditions:
+              - condition: template
+                value_template: "{{ operation == 'add' and location == '' }}"
+            sequence:
+              - variables:
+                  product_name: "Unknown barcode {{ scanned_code }}"
+                  update_kind: shelf_required
+                  result_message: >-
+                    Automatic location needs a shelf for unknown barcode
+                    {{ scanned_code }}. Choose one; nothing changed.
+                  feedback_outcome: REVIEW
+                  feedback_message: Choose shelf on tablet
+              - if:
+                  - condition: template
+                    value_template: "{{ true }}"
+                then: !input on_update
+              - stop: Shelf required before unknown-product identification
+        default: []
+      - action: !input deterministic_lookup_script
+        data:
+          barcode: "{{ scanned_code }}"
+        response_variable: external
+        continue_on_error: true
+      - variables:
+          candidate_found: >-
+            {{ external is defined and external is mapping and
+               external.get('found', false) }}
+          candidate_name: >-
+            {% set n = external.get('name', '') | string | trim
+               if external is defined and external is mapping else '' %}
+            {% set b = external.get('brand', '') | string | trim
+               if external is defined and external is mapping else '' %}
+            {% set full = ((b ~ ' ' ~ n)
+               if b and (b | lower) not in (n | lower) else n) | trim %}
+            {{ (full if full not in ['', 'Unknown']
+               else 'Unknown item (' ~ scanned_code ~ ')')[:250] }}
+          candidate_aliases_text: >-
+            {% set n = external.get('name', '') | string | trim
+               if external is defined and external is mapping else '' %}
+            {% set words = n.split() %}
+            {% set short = (words[-2:] | join(' '))
+               if (words | count) > 2 else '' %}
+            {% if candidate_found and n and short and
+                  (short | lower) != (n | lower) %}
+              {{ n }}, {{ short }}
+            {% elif candidate_found and n %}
+              {{ n }}
+            {% endif %}
+          candidate_aliases: >-
+            {{ candidate_aliases_text.replace('\n', ',').split(',')
+               | map('trim') | reject('equalto', '') | unique | list }}
+      - choose:
+          - alias: Queue trusted deterministic candidate without AI
+            conditions:
+              - condition: template
+                value_template: "{{ candidate_found }}"
+            sequence:
+              - action: grocy_stock_manager.start_product_identification
+                data:
+                  barcode: "{{ scanned_code }}"
+                  operation: "{{ operation }}"
+                  amount: "{{ amount }}"
+                  location_name: "{{ location }}"
+                  quantity_unit_name: "{{ quantity_unit_name_value }}"
+                  request_id: "{{ request_key ~ ':identify' }}"
+                  source: "{{ scan_source }}"
+                  product_name: "{{ candidate_name }}"
+                  product_aliases: "{{ candidate_aliases }}"
+                response_variable: identification
+                continue_on_error: true
+        default:
+          - action: grocy_stock_manager.start_product_identification
+            data:
+              barcode: "{{ scanned_code }}"
+              operation: "{{ operation }}"
+              amount: "{{ amount }}"
+              location_name: "{{ location }}"
+              quantity_unit_name: "{{ quantity_unit_name_value }}"
+              request_id: "{{ request_key ~ ':identify' }}"
+              source: "{{ scan_source }}"
+              agent_id: !input identification_agent
+            response_variable: identification
+            continue_on_error: true
+      - variables:
+          identification_job: >-
+            {{ identification.get('job', {})
+               if identification is defined and identification is mapping
+               else dict() }}
+          identification_queue: >-
+            {{ identification.get('queue', {})
+               if identification is defined and identification is mapping
+               else dict() }}
+      - variables:
+          identification_job_id: >-
+            {{ identification_job.get('job_id', '')
+               if identification_job is mapping else '' }}
+          queue_count: "{{ identification_queue.get('pending_count', 0) | int(0) }}"
+          queue_position: "{{ identification_queue.get('position', 0) | int(0) }}"
+          product_name: >-
+            {{ candidate_name if candidate_found else
+               'Unknown barcode ' ~ scanned_code }}
+      - choose:
+          - alias: Durable review accepted
+            conditions:
+              - condition: template
+                value_template: "{{ identification_job_id != '' }}"
+            sequence:
+              - variables:
+                  update_kind: review_queued
+                  result_message: >-
+                    {% if candidate_found %}
+                      Saved {{ candidate_name }} for confirmation —
+                      {{ queue_count }} waiting. Nothing changed yet.
+                    {% else %}
+                      Saved for review — {{ queue_count }} waiting. AI is
+                      researching {{ scanned_code }}; nothing changed yet.
+                    {% endif %}
+                  feedback_outcome: REVIEW
+                  feedback_message: >-
+                    {{ ('Product found' if candidate_found else 'Saved') ~
+                       ' - ' ~ queue_count ~ ' waiting' }}
+        default:
+          - variables:
+              update_kind: rejected
+              result_message: >-
+                Could not save a durable review for {{ scanned_code }}.
+                Nothing changed; scan it again.
+              feedback_outcome: REJECTED
+              feedback_message: Review not saved - scan again
+      - if:
+          - condition: template
+            value_template: "{{ true }}"
+        then: !input on_update
+  - event: grocy_stock_manager_scan_completed
+    event_data:
+      source: "{{ scan_source }}"
+      barcode: "{{ scanned_code }}"
+      request_id: "{{ request_key }}"
+      operation: "{{ operation }}"
+      update_kind: "{{ update_kind | default('completed') }}"
+      result: "{{ result_message | default('') }}"
+  - action: input_number.set_value
+    target:
+      entity_id: !input quantity_entity
+    data:
+      value: 1
+
+mode: queued
+max: 25
+max_exceeded: warning

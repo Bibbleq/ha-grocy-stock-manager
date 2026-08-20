@@ -262,6 +262,8 @@ class ProductIdentificationStore:
         quantity_unit_name: str | None,
         source: str,
         agent_id: str,
+        candidate_name: str | None = None,
+        product_aliases: tuple[str, ...] = (),
     ) -> tuple[ProductIdentificationJob, bool]:
         """Create a job or replay the existing request without duplication."""
         async with self._lock:
@@ -301,12 +303,13 @@ class ProductIdentificationStore:
             if len(self._records) >= MAX_IDENTIFICATION_RECORDS:
                 raise RuntimeError("identification queue is full")
             now = self.now_timestamp()
+            has_candidate = candidate_name is not None
             job = ProductIdentificationJob(
                 job_id=uuid4().hex,
                 created_at=now,
                 updated_at=now,
-                status="searching",
-                stage="ai_lookup",
+                status="ready" if has_candidate else "searching",
+                stage="catalogue_result" if has_candidate else "ai_lookup",
                 barcode=barcode,
                 operation=operation,
                 amount=amount,
@@ -317,7 +320,13 @@ class ProductIdentificationStore:
                 quantity_unit_name=quantity_unit_name,
                 source=source,
                 agent_id=agent_id,
-                message="Searching with AI",
+                candidate_name=candidate_name,
+                accepted_aliases=product_aliases if has_candidate else (),
+                message=(
+                    "Catalogue suggestion ready for confirmation"
+                    if has_candidate
+                    else "Searching with AI"
+                ),
             )
             self._records[job.job_id] = job
             await self._async_save()

@@ -103,6 +103,9 @@ The current build provides:
 - Five-minute inventory polling plus an immediate refresh request after
   successful scanner or voice stock transactions.
 - Automated tests, Ruff linting, hassfest, and HACS validation.
+- Importable scanner-event and barcode-processing blueprints which keep the
+  integration reusable while allowing household-specific UI and notification
+  callbacks.
 
 Unknown-barcode enrichment is a separate asynchronous subsystem. Callers should
 check Grocy first and may accept the first valid deterministic catalogue match.
@@ -227,6 +230,41 @@ shelves instead of being assigned to its default location.
 The Home Assistant app ingress URL is not suitable for API clients. When Grocy
 runs as a Home Assistant app, expose its web/API port on the local network and
 use that address.
+
+## Scanner blueprints
+
+HACS installs the integration code; Home Assistant blueprints are imported
+separately from their GitHub URLs:
+
+- [Import the barcode-processing script blueprint](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FBibbleq%2Fha-grocy-stock-manager%2Fblob%2Fmain%2Fblueprints%2Fscript%2Fgrocy_stock_manager%2Fprocess_barcode.yaml)
+- [Import the scanner-event automation blueprint](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FBibbleq%2Fha-grocy-stock-manager%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fgrocy_stock_manager%2Fbarcode_scanner_event.yaml)
+
+Create the processing script first, then select it in the scanner automation.
+The scanner must fire an event containing `code`, `scanner_id`, `boot_id` and
+`sequence`. Those immutable values become the idempotent request key. A repeat
+button can call the processing script directly with the saved barcode and a new
+request ID; it is intentionally outside the scanner-event blueprint.
+
+The processing blueprint owns the reusable safety policy: explicit add/consume
+mode, location resolution, the write interlock, exact Grocy lookup, verified
+mutation and durable unknown-product staging. It asks a selected deterministic
+lookup script before starting the selected AI Task. A trusted exact-barcode
+catalogue result is queued ready for human confirmation without invoking AI.
+
+The optional callback action is the household boundary. It can update helpers,
+open a tablet popup, notify a phone or drive scanner feedback using variables
+such as `update_kind`, `result_message`, `feedback_outcome`, `feedback_message`,
+`device_key`, `product_name`, `transaction`, `queue_position` and
+`queue_count`. None of those UI choices are hard-coded into the blueprint.
+
+## Upgrading to 0.14
+
+Version 0.14 adds the reusable scanner blueprints and lets
+`start_product_identification` accept a trusted deterministic `product_name`
+and optional `product_aliases`. In that form the durable review is created in
+`ready` state and AI is not started. When no product name is supplied,
+`agent_id` remains mandatory and the existing background AI behaviour is
+unchanged.
 
 ## Upgrading to 0.13
 

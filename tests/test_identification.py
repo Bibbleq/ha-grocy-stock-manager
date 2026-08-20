@@ -105,6 +105,35 @@ async def test_multiple_unknown_scans_are_saved_as_separate_queue_items() -> Non
     ]
 
 
+async def test_catalogue_candidate_is_queued_without_ai_search() -> None:
+    store = object.__new__(ProductIdentificationStore)
+    store._records = {}
+    store._lock = asyncio.Lock()
+    store._async_save = AsyncMock()
+
+    job, replayed = await store.async_create(
+        barcode="8720181948930",
+        operation="add",
+        amount=Decimal("1"),
+        request_id="scan-catalogue:identify",
+        location_id=None,
+        location_name="Garage L2",
+        quantity_unit_id=None,
+        quantity_unit_name="Pack",
+        source="garage_scanner",
+        agent_id="catalogue",
+        candidate_name="Domestos Bleach Foam Pine Boost 450ml",
+        product_aliases=("bleach foam", "pine bleach"),
+    )
+
+    assert replayed is False
+    assert job.status == "ready"
+    assert job.stage == "catalogue_result"
+    assert job.candidate_name == "Domestos Bleach Foam Pine Boost 450ml"
+    assert job.accepted_aliases == ("bleach foam", "pine bleach")
+    assert store.searching_jobs() == ()
+
+
 def _manager(
     job: ProductIdentificationJob,
     *,

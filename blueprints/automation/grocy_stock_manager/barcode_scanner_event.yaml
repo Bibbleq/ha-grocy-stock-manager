@@ -1,0 +1,88 @@
+blueprint:
+  name: Grocy Stock Manager - barcode scanner event
+  description: >-
+    Convert an immutable barcode scanner event into a call to a Grocy Stock
+    Manager processing script. The event contract uses code, scanner_id,
+    boot_id and sequence fields so request IDs remain idempotent across retries.
+  domain: automation
+  author: Bibbleq
+  source_url: >-
+    https://github.com/Bibbleq/ha-grocy-stock-manager/blob/main/blueprints/automation/grocy_stock_manager/barcode_scanner_event.yaml
+  homeassistant:
+    min_version: 2024.10.0
+  input:
+    scanner:
+      name: Scanner event
+      icon: mdi:barcode-scan
+      input:
+        scan_event_type:
+          name: Event type
+          description: Event fired by the scanner bridge.
+          default: grocy_stock_manager_scan
+          selector:
+            text:
+        processor_script:
+          name: Processing script
+          description: >-
+            Script created from the Grocy Stock Manager barcode-processing
+            blueprint. It must accept barcode, source, request_id and
+            feedback_key fields.
+          selector:
+            entity:
+              filter:
+                - domain: script
+        default_source:
+          name: Source label
+          default: scanner
+          selector:
+            text:
+        minimum_code_length:
+          name: Minimum barcode length
+          default: 6
+          selector:
+            number:
+              min: 1
+              max: 128
+              step: 1
+              mode: box
+variables:
+  default_source_value: !input default_source
+  minimum_code_length_value: !input minimum_code_length
+
+triggers:
+  - trigger: event
+    event_type: !input scan_event_type
+    id: scanner_event
+
+conditions: []
+
+actions:
+  - variables:
+      event_payload: "{{ trigger.event.data }}"
+      scanned_code: "{{ event_payload.get('code', '') | string | trim }}"
+      scan_source: >-
+        {{ event_payload.get('source', default_source_value)
+           | default(default_source_value, true) | string | trim }}
+      request_key: >-
+        {{ (default_source_value ~ ':' ~
+            event_payload.get('scanner_id', 'scanner') ~ ':' ~
+            event_payload.get('boot_id', 'unknown') ~ ':' ~
+            event_payload.get('sequence', 'unknown'))[:120] }}
+      feedback_key: >-
+        {{ event_payload.get('scanner_id', 'scanner') ~ ':' ~
+           event_payload.get('boot_id', 'unknown') ~ ':' ~
+           event_payload.get('sequence', 'unknown') }}
+  - condition: template
+    value_template: >-
+      {{ scanned_code != '' and
+         (scanned_code | length) >= (minimum_code_length_value | int(1)) }}
+  - action: !input processor_script
+    data:
+      barcode: "{{ scanned_code }}"
+      source: "{{ scan_source }}"
+      request_id: "{{ request_key }}"
+      feedback_key: "{{ feedback_key }}"
+
+mode: queued
+max: 25
+max_exceeded: warning
