@@ -188,28 +188,27 @@ class BarcodeResearcher:
                     "task_name": "Identify product from supplied barcode evidence",
                     "instructions": _research_prompt(evidence),
                     "structure": {
-                        "identified": {
-                            "selector": {"boolean": {}},
-                            "required": True,
-                            "description": (
-                                "True only when the evidence satisfies the "
-                                "acceptance rule."
-                            ),
-                        },
                         "product_name": {
                             "selector": {"text": {}},
                             "required": True,
-                            "description": "Full recognisable product name or blank.",
+                            "description": (
+                                "Non-empty full recognisable product name only "
+                                "when decision is verified; otherwise blank."
+                            ),
                         },
                         "brand": {
                             "selector": {"text": {}},
                             "required": True,
                             "description": "Product brand or blank.",
                         },
-                        "confidence": {
-                            "selector": {"text": {}},
+                        "decision": {
+                            "selector": {
+                                "select": {
+                                    "options": ["verified", "uncertain", "unknown"]
+                                }
+                            },
                             "required": True,
-                            "description": "Exactly verified, uncertain or unknown.",
+                            "description": "Verification decision.",
                         },
                         "evidence": {
                             "selector": {"text": {"multiline": True}},
@@ -232,10 +231,9 @@ class BarcodeResearcher:
         data = response.get("data", {}) if isinstance(response, Mapping) else {}
         if not isinstance(data, Mapping):
             data = {}
-        identified = _as_bool(data.get("identified"))
-        confidence = str(data.get("confidence", "unknown")).strip().casefold()
+        confidence = str(data.get("decision", "unknown")).strip().casefold()
         product_name = str(data.get("product_name", "")).strip()[:255]
-        found = identified and confidence == "verified" and bool(product_name)
+        found = confidence == "verified" and bool(product_name)
         return {
             "response_version": 1,
             "success": True,
@@ -284,15 +282,11 @@ def _research_prompt(evidence: BarcodeWebEvidence) -> str:
         "Accept when one result explicitly pairs the exact barcode with a product, "
         "or when at least two independent domains returned by this barcode query "
         "agree on the same product. Never infer from a barcode prefix, owner, or "
-        "nearby code. Use confidence verified only when accepted; otherwise return "
-        f"uncertain or unknown. Evidence JSON: {compact}"
+        "nearby code. Return decision verified only when accepted. For decision "
+        "verified, product_name must be a non-empty recognisable product name. "
+        "For uncertain or unknown, product_name must be blank. Evidence JSON: "
+        f"{compact}"
     )
-
-
-def _as_bool(value: object) -> bool:
-    if isinstance(value, bool):
-        return value
-    return str(value).strip().casefold() in {"true", "1", "yes"}
 
 
 def _failure(error_code: str) -> dict[str, Any]:
