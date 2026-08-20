@@ -235,6 +235,17 @@ def _at_most_one_quantity_unit(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def _identification_source(data: dict[str, Any]) -> dict[str, Any]:
+    """Require either a trusted candidate or an agent for unknown-product work."""
+    candidate = data.get(ATTR_PRODUCT_NAME)
+    agent_id = data.get(ATTR_AGENT_ID)
+    if not candidate and not agent_id:
+        raise vol.Invalid("agent_id is required when product_name is not supplied")
+    if data.get(ATTR_PRODUCT_ALIASES) and not candidate:
+        raise vol.Invalid("product_aliases requires product_name")
+    return data
+
+
 CONFIRM_PRODUCT_SCHEMA = vol.All(
     vol.Schema(
         {
@@ -437,13 +448,18 @@ START_PRODUCT_IDENTIFICATION_SCHEMA = vol.All(
             vol.Optional(ATTR_SOURCE, default="scanner"): vol.All(
                 _non_empty_string, vol.Length(max=64)
             ),
-            vol.Required(ATTR_AGENT_ID): vol.All(
+            vol.Optional(ATTR_AGENT_ID): vol.All(
                 _non_empty_string, vol.Length(max=255)
             ),
+            vol.Optional(ATTR_PRODUCT_NAME): vol.All(
+                _non_empty_string, vol.Length(max=255)
+            ),
+            vol.Optional(ATTR_PRODUCT_ALIASES, default=()): _product_aliases,
         }
     ),
     _at_most_one_location,
     _at_most_one_quantity_unit,
+    _identification_source,
 )
 
 
@@ -1386,7 +1402,9 @@ async def _async_start_product_identification(
                 )
             ),
             source=call.data[ATTR_SOURCE],
-            agent_id=call.data[ATTR_AGENT_ID],
+            agent_id=call.data.get(ATTR_AGENT_ID, "catalogue"),
+            candidate_name=call.data.get(ATTR_PRODUCT_NAME),
+            product_aliases=call.data[ATTR_PRODUCT_ALIASES],
         )
     except RuntimeError as err:
         raise ServiceValidationError(

@@ -102,7 +102,7 @@ def test_research_schema_is_independent_of_catalogue_orchestration() -> None:
         )
 
 
-def test_identification_schema_uses_generic_source_and_requires_agent() -> None:
+def test_identification_schema_uses_generic_source_and_requires_a_source() -> None:
     payload = {
         ATTR_BARCODE: "8720181948930",
         ATTR_OPERATION: "add",
@@ -116,6 +116,29 @@ def test_identification_schema_uses_generic_source_and_requires_agent() -> None:
     with pytest.raises(vol.MultipleInvalid):
         START_PRODUCT_IDENTIFICATION_SCHEMA(
             {key: value for key, value in payload.items() if key != ATTR_AGENT_ID}
+        )
+
+    catalogue = START_PRODUCT_IDENTIFICATION_SCHEMA(
+        {
+            ATTR_BARCODE: "8720181948930",
+            ATTR_OPERATION: "add",
+            ATTR_REQUEST_ID: "scanner:device:2",
+            ATTR_PRODUCT_NAME: "Domestos Bleach Foam Pine Boost 450ml",
+            ATTR_PRODUCT_ALIASES: "bleach foam, pine bleach",
+        }
+    )
+    assert ATTR_AGENT_ID not in catalogue
+    assert catalogue[ATTR_PRODUCT_ALIASES] == ("bleach foam", "pine bleach")
+
+    with pytest.raises(vol.MultipleInvalid):
+        START_PRODUCT_IDENTIFICATION_SCHEMA(
+            {
+                ATTR_BARCODE: "8720181948930",
+                ATTR_OPERATION: "add",
+                ATTR_REQUEST_ID: "scanner:device:3",
+                ATTR_AGENT_ID: "ai_task.web_search_agent",
+                ATTR_PRODUCT_ALIASES: "orphan alias",
+            }
         )
 
 
