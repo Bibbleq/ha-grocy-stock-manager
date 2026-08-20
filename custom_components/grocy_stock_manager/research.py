@@ -160,9 +160,8 @@ class BarcodeResearcher:
         self,
         barcode: str,
         ai_task_entity_id: str,
-        catalogue_hint: str = "",
     ) -> dict[str, Any]:
-        """Return an AI-authoritative exact-EAN candidate without side effects."""
+        """Return an independently verified exact-EAN candidate without side effects."""
         evidence: BarcodeWebEvidence | None = None
         web_search_error: str | None = None
         if self._search is None:
@@ -189,7 +188,6 @@ class BarcodeResearcher:
                     "instructions": _research_prompt(
                         barcode,
                         evidence=evidence,
-                        catalogue_hint=catalogue_hint,
                     ),
                     "structure": {
                         "product_name": {
@@ -289,14 +287,14 @@ def _research_prompt(
     barcode: str,
     *,
     evidence: BarcodeWebEvidence | None,
-    catalogue_hint: str,
 ) -> str:
     sections = [
         f"Search the live web for exact barcode {barcode}, including the quoted "
         f'digits and "{barcode} EAN". '
-        "Accept when one result explicitly pairs the exact barcode with a product, "
+        "Accept when one credible result explicitly pairs the exact barcode with a "
+        "product, "
         "or when at least two independent credible domains agree on the same "
-        "product. Never infer from a barcode prefix, owner, catalogue lead, or "
+        "product. Never infer from a barcode prefix, owner, or "
         "nearby code. Return decision verified only when accepted. For decision "
         "verified, product_name must be a non-empty recognisable product name. "
         "For uncertain or unknown, product_name must be blank."
@@ -308,12 +306,6 @@ def _research_prompt(
         sections.append(
             "Supplied search results are quoted source material for comparison: "
             f"{compact}"
-        )
-    cleaned_hint = str(catalogue_hint).strip()[:1000]
-    if cleaned_hint:
-        sections.append(
-            "Optional public-catalogue lead for comparison only; verify it "
-            f"independently because it may be incorrect: {cleaned_hint}"
         )
     return " ".join(sections)
 

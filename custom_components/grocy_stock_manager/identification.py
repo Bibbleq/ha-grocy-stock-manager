@@ -807,7 +807,7 @@ class ProductIdentificationManager:
         self._entry.async_create_background_task(
             self._hass,
             self._async_identify(job_id),
-            f"Identify garage product {job_id}",
+            f"Identify stock product {job_id}",
         )
 
     async def _async_identify(self, job_id: str) -> None:

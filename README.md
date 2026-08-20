@@ -15,6 +15,30 @@ Assistant. Grocy Stock Manager has a narrower job: make an inventory change
 safely or fail visibly. Barcode scanners, Home Assistant Assist, and dashboard
 controls will all use the same transaction engine and location rules.
 
+## Integration boundary
+
+Grocy Stock Manager is deliberately workflow-agnostic. It owns exact Grocy
+resolution, safe stock mutations, durable unknown-product jobs, human
+confirmation and optional AI barcode research. Home Assistant owns the policy
+around those actions: which scanner event starts a flow, which public catalogues
+are queried, where confirmation is shown, and whether notifications or shopping
+list actions follow.
+
+That separation makes the integration reusable with any scanner, dashboard,
+voice pipeline or notification provider. A recommended consumer flow is:
+
+1. Call `grocy_stock_manager.lookup`; a Grocy match wins immediately.
+2. Optionally query deterministic public catalogues in the automation or script;
+   the first valid exact-barcode match wins.
+3. Only after those providers miss, call `research_barcode` or start a durable
+   background identification job with an AI Task.
+4. Require a person to confirm any newly identified product before it is created
+   or its captured stock transaction is committed.
+
+The integration does not subscribe directly to scanner entities and does not
+require a particular dashboard. Consumers interact through versioned Home
+Assistant action responses, sensors and events.
+
 Implemented safeguards include:
 
 - Exact barcode-to-product resolution through Grocy.
@@ -80,11 +104,11 @@ The current build provides:
   successful scanner or voice stock transactions.
 - Automated tests, Ruff linting, hassfest, and HACS validation.
 
-Unknown-barcode enrichment is a separate asynchronous subsystem. Grocy is
-always checked first; only an unknown barcode enters external research. Public
-catalogues provide comparison leads, while a verified AI Task verdict is the
-sole external acceptance gate. `start_product_identification` durably stores
-the scanner intent before research and returns without holding the scanner. The Status sensor and
+Unknown-barcode enrichment is a separate asynchronous subsystem. Callers should
+check Grocy first and may accept the first valid deterministic catalogue match.
+Only a barcode still unknown after that cascade should enter AI research.
+`start_product_identification` durably stores the scanner intent before research
+and returns without holding the scanner. The Status sensor and
 `grocy_stock_manager_identification_updated` event expose searching, suggested,
 manual-required, confirming, failed, completed and rejected states. A candidate
 must still be confirmed before `confirm_product_identification` can create or
@@ -92,12 +116,11 @@ map it and apply the immutable captured intent.
 
 ## Web-grounded barcode research
 
-For products missed by Grocy, the integration can ask a web-search-capable AI
-Task to research the exact barcode. A deterministic public-catalogue result can
-be supplied as a comparison lead, but it is never accepted by itself. The AI
-Task must independently return a verified exact-EAN match and a non-empty
-product name. Prefix-only, owner-only, nearby-code, uncertain, and malformed
-answers are rejected.
+As the final fallback for products missed by Grocy and any deterministic
+catalogues, the integration can ask a web-search-capable AI Task to research the
+exact barcode. The AI Task must return a verified exact-EAN match and a
+non-empty product name. Prefix-only, owner-only, nearby-code, uncertain, and
+malformed answers are rejected.
 
 Tavily is optional supporting evidence. To enable it, create a Tavily API key,
 then open **Settings > Devices & services > Grocy Stock Manager > Reconfigure**
@@ -110,8 +133,7 @@ are supplied to the AI Task alongside its own live search.
 action: grocy_stock_manager.research_barcode
 data:
   barcode: "8720181948930"
-  ai_task_entity_id: ai_task.azure_bibbleha_model_router
-  catalogue_hint: "Public catalogue candidate: Domestos cleaner"
+  ai_task_entity_id: ai_task.my_web_search_agent
 response_variable: barcode_research
 ```
 
@@ -119,6 +141,9 @@ This action is read-only. It returns a verified candidate or a stable failure
 code such as `no_verified_match` or `ai_task_error`; it never creates a Grocy
 product or changes stock. `web_search_error` separately reports whether optional
 Tavily evidence was unavailable without preventing the AI Task's own search.
+The response contract also includes `response_version`, `success`, `found`,
+`product_name`, `brand`, `confidence`, `evidence`, and bounded `web_evidence`, so
+automations do not need to parse prose.
 
 ## Voice product names
 
@@ -156,8 +181,8 @@ data:
   product_phrase: hair gel
   amount: 1
   request_id: "{{ context.id }}"
-  source: garage_voice
-response_variable: garage_voice_result
+  source: voice
+response_variable: voice_result
 ```
 
 The first time, `hair gel` can offer `got2b glued Styling Gel`. A tablet or
@@ -203,6 +228,16 @@ The Home Assistant app ingress URL is not suitable for API clients. When Grocy
 runs as a Home Assistant app, expose its web/API port on the local network and
 use that address.
 
+## Upgrading to 0.13
+
+Version 0.13 makes the reusable integration boundary explicit. The
+`catalogue_hint` input was removed from `research_barcode`; accept a trusted
+deterministic catalogue match in the calling automation, and invoke AI research
+only after the catalogue cascade misses. `start_product_identification` now
+requires an explicit `agent_id` rather than assuming a particular conversation
+provider, and its generic default source is `scanner`. Existing request IDs,
+journal records, Grocy data and stock transaction behaviour are unchanged.
+
 ## Read-only lookup action
 
 Call `grocy_stock_manager.lookup` with exactly one of `barcode`, `product_id`,
@@ -243,8 +278,8 @@ action: grocy_stock_manager.consume
 data:
   barcode: "0123456789012"
   amount: 1
-  request_id: "garage-atom-boot-42"
-  source: garage_scanner
+  request_id: "scanner-device-boot-42"
+  source: scanner
 response_variable: grocy_transaction
 ```
 
@@ -273,7 +308,7 @@ action: grocy_stock_manager.confirm_product
 data:
   barcode: "0123456789012"
   product_name: Cat litter (Golden Grey)
-  location_name: Garage Misc
+  location_name: Storage
   barcode_amount: 1
 response_variable: grocy_catalogue
 ```
@@ -297,8 +332,8 @@ After Grocy and fast deterministic providers return no match, call
 intent before returning `accepted: true`; the configured conversation or AI
 Task lookup then runs in a bounded background task and cannot hold the scanner
 queue open. When an `ai_task.*` entity is supplied, the background task uses the
-same AI-authoritative exact-EAN research path described above; configured Tavily
-results remain optional supporting evidence.
+same independently verified exact-EAN fallback described above; configured
+Tavily results remain optional supporting evidence.
 
 ```yaml
 action: grocy_stock_manager.start_product_identification
@@ -306,11 +341,11 @@ data:
   barcode: "5000166157315"
   operation: add
   amount: 4
-  location_name: Garage L3
+  location_name: Storage shelf 3
   quantity_unit_name: Pack
-  request_id: garage:scanner:boot:sequence
-  source: garage_scanner
-  agent_id: ai_task.azure_bibbleha_model_router
+  request_id: scanner:device:boot:sequence
+  source: scanner
+  agent_id: ai_task.my_web_search_agent
 response_variable: identification
 ```
 
@@ -397,7 +432,7 @@ response_variable: merge_plan
 Run the reviewed plan again with `dry_run: false` and the same request ID. Only
 `outcome: committed`, `success: true`, and all verification checks set to true
 mean the merge is complete. Grocy permanently deletes the removed duplicate as
-part of its native merge; it does not affect the former AnyList source data.
+part of its native merge; it does not alter any external source data.
 
 ## Manual installation during development
 

@@ -4,11 +4,15 @@ from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
+import pytest
+import voluptuous as vol
 from homeassistant.const import CONF_API_KEY, CONF_URL, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.grocy_stock_manager.const import (
+    ATTR_AGENT_ID,
+    ATTR_AI_TASK_ENTITY_ID,
     ATTR_AMOUNT,
     ATTR_BARCODE,
     ATTR_BARCODE_AMOUNT,
@@ -52,6 +56,8 @@ from custom_components.grocy_stock_manager.models import (
 from custom_components.grocy_stock_manager.resolver import GrocyProductResolver
 from custom_components.grocy_stock_manager.services import (
     CONFIRM_PRODUCT_IDENTIFICATION_SCHEMA,
+    RESEARCH_BARCODE_SCHEMA,
+    START_PRODUCT_IDENTIFICATION_SCHEMA,
     _async_confirm_product_identification,
     _async_confirm_product_transaction,
     _async_mutate,
@@ -75,6 +81,42 @@ def test_confirm_identification_schema_accepts_barcode_amount() -> None:
     )
 
     assert validated[ATTR_BARCODE_AMOUNT] == Decimal("4")
+
+
+def test_research_schema_is_independent_of_catalogue_orchestration() -> None:
+    validated = RESEARCH_BARCODE_SCHEMA(
+        {
+            ATTR_BARCODE: "8720181948930",
+            ATTR_AI_TASK_ENTITY_ID: "ai_task.web_search_agent",
+        }
+    )
+
+    assert set(validated) == {ATTR_BARCODE, ATTR_AI_TASK_ENTITY_ID}
+    with pytest.raises(vol.MultipleInvalid):
+        RESEARCH_BARCODE_SCHEMA(
+            {
+                ATTR_BARCODE: "8720181948930",
+                ATTR_AI_TASK_ENTITY_ID: "ai_task.web_search_agent",
+                "catalogue_hint": "An orchestration concern",
+            }
+        )
+
+
+def test_identification_schema_uses_generic_source_and_requires_agent() -> None:
+    payload = {
+        ATTR_BARCODE: "8720181948930",
+        ATTR_OPERATION: "add",
+        ATTR_REQUEST_ID: "scanner:device:1",
+        ATTR_AGENT_ID: "ai_task.web_search_agent",
+    }
+
+    validated = START_PRODUCT_IDENTIFICATION_SCHEMA(payload)
+
+    assert validated[ATTR_SOURCE] == "scanner"
+    with pytest.raises(vol.MultipleInvalid):
+        START_PRODUCT_IDENTIFICATION_SCHEMA(
+            {key: value for key, value in payload.items() if key != ATTR_AGENT_ID}
+        )
 
 
 async def test_override_product_identification_forwards_catalogue_candidate() -> None:
@@ -402,7 +444,7 @@ async def test_undo_transaction_applies_exact_opposite_once() -> None:
             "product_id": 1,
             "location_id": 12,
             "amount": 2,
-            "source": "garage_voice",
+            "source": "pantry_voice",
             "requires_reconciliation": False,
         }
     }
@@ -438,17 +480,17 @@ async def test_undo_transaction_applies_exact_opposite_once() -> None:
     assert journal.async_update_result.await_count == 2
 
 
-async def test_undo_rejects_catalogue_migration_transactions() -> None:
-    """The family undo path cannot compensate a bulk catalogue import."""
+async def test_undo_rejects_non_stock_transactions() -> None:
+    """The undo path cannot compensate anything except add or consume."""
     journal = AsyncMock()
     journal.async_get.return_value = {
         "result": {
             "outcome": "committed",
-            "operation": "add",
+            "operation": "merge_products",
             "product_id": 1,
             "location_id": 12,
             "amount": 1,
-            "source": "anylist_migration",
+            "source": "migration_tool",
             "requires_reconciliation": False,
         }
     }
@@ -460,7 +502,7 @@ async def test_undo_rejects_catalogue_migration_transactions() -> None:
         )
     )
     call = SimpleNamespace(
-        data={ATTR_ORIGINAL_REQUEST_ID: "anylist-import-1"},
+        data={ATTR_ORIGINAL_REQUEST_ID: "migration-1"},
     )
 
     response = await _async_undo_transaction(entry, call)
