@@ -270,6 +270,9 @@ Version 0.14.1 makes the scanner automation's length guard explicitly coerce
 numeric-only EAN values to text, matching Home Assistant's native template
 typing and preventing valid numeric barcodes from being rejected early.
 
+Version 0.14.2 applies the same explicit coercion to control-code detection in
+the processing script, before any `.startswith()` or shelf-prefix operation.
+
 ## Upgrading to 0.13
 
 Version 0.13 makes the reusable integration boundary explicit. The

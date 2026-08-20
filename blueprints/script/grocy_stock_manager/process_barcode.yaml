@@ -198,8 +198,9 @@ sequence:
       device_key: "{{ feedback_key | default('', true) | string | trim }}"
       shelf_options: "{{ state_attr(shelf_entity_value, 'options') or [] }}"
       shelf_token: >-
-        {{ scanned_code[(shelf_code_prefix_value | length):]
-           if scanned_code.startswith(shelf_code_prefix_value) else '' }}
+        {% set code = scanned_code | string %}
+        {{ code[(shelf_code_prefix_value | length):]
+           if code.startswith(shelf_code_prefix_value) else '' }}
       requested_shelf: >-
         {{ other_shelf_option_value
            if scanned_code == other_shelf_code_value else shelf_token }}
@@ -248,7 +249,7 @@ sequence:
         conditions:
           - condition: template
             value_template: >-
-              {{ scanned_code.startswith(shelf_code_prefix_value) and
+              {{ (scanned_code | string).startswith(shelf_code_prefix_value) and
                  requested_shelf in shelf_options }}
         sequence:
           - action: input_select.select_option
@@ -270,8 +271,8 @@ sequence:
         conditions:
           - condition: template
             value_template: >-
-              {{ scanned_code.startswith('MODE-') or
-                 scanned_code.startswith(shelf_code_prefix_value) }}
+              {{ (scanned_code | string).startswith('MODE-') or
+                 (scanned_code | string).startswith(shelf_code_prefix_value) }}
         sequence:
           - variables:
               update_kind: rejected
