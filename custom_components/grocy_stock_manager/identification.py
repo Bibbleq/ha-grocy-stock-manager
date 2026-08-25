@@ -456,9 +456,10 @@ class ProductIdentificationManager:
     async def async_start(self, **data: Any) -> dict[str, Any]:
         """Persist an immutable intent and return before AI is invoked."""
         job, replayed = await self._store.async_create(**data)
-        if not replayed and job.status == "searching":
+        if not replayed:
             self._fire_update(job)
-            self._schedule(job.job_id)
+            if job.status == "searching":
+                self._schedule(job.job_id)
         return {
             "response_version": 1,
             "success": True,
