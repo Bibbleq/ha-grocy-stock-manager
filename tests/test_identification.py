@@ -167,6 +167,30 @@ def _manager(
     return manager, store, aliases
 
 
+async def test_catalogue_candidate_start_publishes_update_without_ai_search() -> None:
+    job = replace(
+        _job(),
+        status="ready",
+        stage="catalogue_result",
+        agent_id="catalogue",
+        candidate_name="Sainsbury's Baking Powder",
+        accepted_aliases=("Baking Powder",),
+    )
+    manager, store, _aliases = _manager(job)
+    store.async_create = AsyncMock(return_value=(job, False))
+    manager._schedule = Mock()
+
+    response = await manager.async_start()
+
+    assert response["accepted"] is True
+    assert response["job"]["status"] == "ready"
+    manager._hass.bus.async_fire.assert_called_once()
+    (
+        manager._entry.runtime_data.coordinator.async_update_listeners
+    ).assert_called_once()
+    manager._schedule.assert_not_called()
+
+
 async def test_alias_failure_cannot_leave_committed_job_pending() -> None:
     job = replace(
         _job(),
